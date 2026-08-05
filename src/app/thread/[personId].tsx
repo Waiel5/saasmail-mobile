@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 
 import { MessageBody } from '@/components/message-body';
@@ -27,6 +28,7 @@ import { useActiveServer } from '@/lib/use-servers';
 export default function ThreadScreen() {
   const c = useTheme();
   const { personId, type } = useLocalSearchParams<{ personId: string; type?: string }>();
+  const router = useRouter();
   const server = useActiveServer();
   const isGroup = type === 'group';
 
@@ -46,6 +48,9 @@ export default function ThreadScreen() {
   // Oldest first, so the newest message is where the scroll lands.
   const ordered = [...messages].sort((a, b) => a.createdAt - b.createdAt);
   const chatMode = query.data?.inboxes?.[0]?.displayMode === 'chat';
+  const latestInbound = [...ordered]
+    .reverse()
+    .find((m) => m.type === 'received');
 
   const title =
     ordered.find((m) => m.type === 'received')?.fromAddress ??
@@ -55,9 +60,75 @@ export default function ThreadScreen() {
   return (
     <>
       <Stack.Screen options={{ title, headerBackButtonDisplayMode: 'minimal' }} />
+
+      {/*
+        Reply targets the newest *received* message, not the newest message.
+        `POST /api/send/reply/{emailId}` needs something that arrived — replying
+        to your own last sent message is not a thing the endpoint can do, and
+        picking `ordered.at(-1)` blindly hands it a sent id whenever the last
+        word was yours, which is most of the time in a support mailbox.
+
+        Its `recipient` is the inbox the mail came in on, which is also the
+        address it should go back out from. Passing it means the composer opens
+        on the right identity instead of making the user pick it again — or,
+        worse, defaulting to the wrong one and answering a customer from an
+        address they have never seen.
+      */}
+      {/*
+        The same grammar as the inbox: contextual action on the left, compose
+        detached on the right. Mail does this too — the compose button stays in
+        the corner on the message screen as well as the list, so "write
+        something new" is never more than one tap from anywhere. Keeping the
+        two bars structurally identical means the corner your thumb has learned
+        does not change meaning when you open a conversation.
+
+        Deliberately no trash. Mail's message view can offer one because it is
+        showing exactly one message; this screen is a whole timeline with a
+        person, so a bin here would have to mean either "this conversation" or
+        "this person" and the icon cannot say which.
+      */}
+      <Stack.Toolbar placement="bottom">
+        {latestInbound ? (
+          <Stack.Toolbar.Button
+            icon="arrowshape.turn.up.left"
+            accessibilityLabel="Reply"
+            onPress={async () => {
+              if (process.env.EXPO_OS === 'ios') {
+                await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }
+              router.push({
+                pathname: '/compose',
+                params: {
+                  replyTo: latestInbound.id,
+                  from: latestInbound.recipient ?? '',
+                },
+              });
+            }}
+          />
+        ) : null}
+        <Stack.Toolbar.Spacer />
+        <Stack.Toolbar.Button
+          icon="square.and.pencil"
+          accessibilityLabel="New message"
+          separateBackground
+          onPress={async () => {
+            if (process.env.EXPO_OS === 'ios') {
+              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }
+            router.push('/compose');
+          }}
+        />
+      </Stack.Toolbar>
+
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{ padding: Spacing.four, gap: Spacing.four }}>
+        contentContainerStyle={{
+          padding: Spacing.four,
+          gap: Spacing.four,
+          // Clears the floating reply capsule, which otherwise sits on top of
+          // the last message rather than below it.
+          paddingBottom: Spacing.four + 72,
+        }}>
         {query.isLoading ? (
           <ActivityIndicator style={{ marginTop: Spacing.seven }} />
         ) : ordered.length === 0 ? (

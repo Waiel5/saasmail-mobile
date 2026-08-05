@@ -61,6 +61,27 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="compose"
+            options={{
+              // A full modal rather than a form sheet. A sheet is right for a
+              // short errand like adding a server; writing a message is the
+              // longest-lived thing anyone does in this app, and a sheet spends
+              // the top of the screen showing what is behind it at exactly the
+              // moment the keyboard is taking the bottom half.
+              //
+              // `presentation` has to be declared here, on the layout's screen
+              // — set from inside the route it is read too late to change how
+              // the screen was pushed.
+              presentation: 'modal',
+              contentStyle: {
+                backgroundColor:
+                  colorScheme === 'dark'
+                    ? Colors.dark.background
+                    : Colors.light.background,
+              },
+            }}
+          />
+          <Stack.Screen
             name="thread/[personId]"
             options={{ headerLargeTitle: false }}
           />

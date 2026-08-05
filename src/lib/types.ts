@@ -81,6 +81,12 @@ export interface Inbox {
   displayName: string | null;
   /** Thread mode keeps subjects and quoted history; chat strips them. */
   displayMode: 'thread' | 'chat';
+  /**
+   * Present on `GET /api/inboxes`, absent from the inboxes embedded in a
+   * messages response. Applied client-side on send — the server stores and
+   * sanitizes it but never appends it.
+   */
+  signatureHtml?: string | null;
 }
 
 export interface MessagesResponse {

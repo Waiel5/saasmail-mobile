@@ -142,21 +142,26 @@ export default function InboxScreen() {
       />
 
       {/*
-        The real bottom toolbar, not a drawn one. This is the layout Mail uses:
-        filter on the left, the search field in the middle, compose on the
-        right with its own background so it reads as the primary action.
+        Two capsules with air between them, not one crowded bar.
 
-        The previous version of this screen hand-rolled a circular button with
-        a box shadow — an Android FAB drawn in JavaScript, which is neither the
-        platform's control nor the platform's shape. This is a UIBarButtonItem:
-        it inherits the system tint, the liquid-glass material, the press
+        `separateBackground` on the search slot is not only cosmetic: it makes
+        UIKit render the search as `integratedButton`, so it sits there as a
+        magnifying glass and expands into the full field on tap. Stretched
+        across the bar instead, the search field is the widest thing on screen
+        and reads as the primary action — which it is not. Compose is.
+
+        Both items are UIBarButtonItems. The previous version of this screen
+        hand-rolled a circular Pressable with a box shadow, which is an Android
+        FAB drawn in JavaScript: not the platform's control and not its shape.
+        These inherit the system tint, the liquid-glass material, the press
         behaviour and the accessibility semantics for free.
       */}
       <Stack.Toolbar placement="bottom">
+        <Stack.Toolbar.SearchBarSlot separateBackground />
         <Stack.Toolbar.Spacer />
-        <Stack.Toolbar.SearchBarSlot />
         <Stack.Toolbar.Button
           icon="square.and.pencil"
+          accessibilityLabel="New message"
           separateBackground
           onPress={async () => {
             if (process.env.EXPO_OS === "ios") {
