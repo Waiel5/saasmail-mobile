@@ -107,3 +107,53 @@ export function withSignature(
   if (!signature) return bodyHtml;
   return bodyHtml ? `${bodyHtml}\n<br>\n${signature}` : signature;
 }
+
+/**
+ * Whether an email's HTML part carries anything its text part does not.
+ *
+ * Almost every real message is multipart/alternative with both, so
+ * "does it have HTML?" is the wrong question — the answer is always yes, and
+ * answering it by rendering HTML puts a WebView under every one-line reply.
+ * The useful question is whether the HTML is doing any work.
+ *
+ * When it is not, the text part is strictly better: it is a real `Text`, so it
+ * is selectable, it inherits Dynamic Type, and it costs no web view. When it
+ * is — a newsletter, a receipt, anything laid out in tables — the text part is
+ * typically a stripped skeleton or a bare list of URLs, and showing it instead
+ * of the HTML is how a mail client looks broken.
+ *
+ * Entities are decoded in reverse of the order they are written, `&amp;` last,
+ * for the same reason `textToHtml` writes it first: decode it early and
+ * `&amp;lt;` collapses to `<` and falsely matches.
+ */
+export function htmlAddsNothing(html: string, text: string): boolean {
+  if (!text.trim()) return false;
+
+  // Text equivalence alone is not enough. A promotional mail can be one word
+  // inside a 600px table with a hero image, and stripping the tags off that
+  // yields exactly its text part — so comparing words concludes the markup is
+  // doing nothing, when the markup is the entire message. These are the
+  // elements that carry meaning the text part structurally cannot: pictures,
+  // layout, tappable links, headings, lists, rules.
+  if (
+    /<\s*(img|table|a|style|h[1-6]|ul|ol|blockquote|hr|font|figure|video|iframe)\b/i.test(
+      html,
+    )
+  ) {
+    return false;
+  }
+
+  const stripped = html
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\/\s*(p|div|tr|li|h[1-6])\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+
+  const flatten = (value: string) => value.replace(/\s+/g, " ").trim();
+  return flatten(stripped) === flatten(text);
+}

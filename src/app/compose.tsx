@@ -90,11 +90,17 @@ export default function ComposeScreen() {
     body: resumed?.body ?? '',
   });
   const options = inboxes.data ?? [];
-  // The From address is chosen for the user when there is nothing to choose:
-  // an inbox named by the caller, else the only one they have. Leaving it blank
-  // and demanding a tap is a step with one possible outcome.
+  // Always defaulted, never left blank.
+  //
+  // This used to default only when the account had exactly one inbox, on the
+  // reasoning that a real choice should be made deliberately. The second
+  // address arriving turned that into a composer that opens with no sender,
+  // a disabled Send, and — because the empty state was written for an account
+  // with no inboxes at all — the words "No sending address" on a screen
+  // offering two. A default that is wrong is one visible tap from being right;
+  // a blank one is a puzzle.
   const from =
-    draft.from || (options.length === 1 ? options[0].email : '') || '';
+    draft.from || params.from || options[0]?.email || '';
   const selected = useMemo(
     () => options.find((i) => i.email.toLowerCase() === from.toLowerCase()),
     [options, from],
@@ -327,7 +333,12 @@ export default function ComposeScreen() {
             <Text
               numberOfLines={1}
               style={{ ...Type.body, color: from ? c.text : c.textTertiary }}>
-              {selected ? labelFor(selected) : from || 'No sending address'}
+              {selected
+                ? labelFor(selected)
+                : from ||
+                  (inboxes.isSuccess
+                    ? 'No address on this server can send'
+                    : '')}
             </Text>
           )}
         </Field>

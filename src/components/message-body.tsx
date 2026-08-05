@@ -7,6 +7,7 @@ import { WebView } from 'react-native-webview';
 import { Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
+  htmlAddsNothing,
   stripUnsubscribeFooter,
   stripUnsubscribeFooterHtml,
 } from '@/lib/mail-text';
@@ -60,7 +61,11 @@ export function MessageBody({ message, tint }: { message: Message; tint: string 
     [bodyHtml],
   );
 
-  if (bodyText) {
+  // The text part wins only when the HTML part is not doing anything. Reaching
+  // for text whenever it exists — which was the rule here — means a newsletter
+  // renders as its stripped skeleton, because virtually every real message is
+  // multipart/alternative and carries both.
+  if (bodyText && (!bodyHtml || htmlAddsNothing(bodyHtml, bodyText))) {
     return (
       <Text selectable style={{ ...Type.body, color: tint }}>
         {bodyText}
@@ -84,15 +89,32 @@ export function MessageBody({ message, tint }: { message: Message; tint: string 
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src ${imgSrc};">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root { color-scheme: ${c.background === '#FCFCFC' ? 'light' : 'dark'}; }
+  /*
+    Light, always — even in dark mode.
+
+    Mail HTML is written against an assumed white page and says so only where
+    it disagrees: a table sets its own background, the text around it does not.
+    Render that over a dark surface and every unstyled run stays black on
+    black. Apple Mail makes the same call for exactly this reason. The
+    surrounding card is still themed; it is the sender's document that is not.
+  */
+  :root { color-scheme: light; }
   body {
     margin: 0; padding: 0;
     font: -apple-system-body, system-ui, sans-serif;
     font-size: 17px; line-height: 1.45;
-    color: ${tint}; background: transparent;
+    color: #101418; background: #FFFFFF;
     word-wrap: break-word; overflow-wrap: anywhere;
   }
   img, table { max-width: 100% !important; height: auto !important; }
+  /*
+    Legacy mail is a fixed 600px table and no amount of max-width reaches the
+    width="600" attributes nested inside it. Rather than clip, the document
+    is scaled down to fit — which is what a phone mail client has always done
+    with desktop-width mail, and is why such mail is legible rather than
+    cropped at the third column.
+  */
+  body { transform-origin: 0 0; }
   a { color: ${c.unread}; }
   blockquote {
     margin: 0 0 0 8px; padding-left: 10px;
@@ -103,8 +125,29 @@ export function MessageBody({ message, tint }: { message: Message; tint: string 
   // Reports content height so the WebView can size to it — a fixed height
   // either clips the message or leaves dead space under short ones. Images
   // settle after load, so this reports again then.
-  function report(){ window.ReactNativeWebView.postMessage(String(document.body.scrollHeight)); }
-  report(); window.addEventListener('load', report);
+  var scale = 1;
+  function fit() {
+    // Undo any previous scale before measuring, or each pass compounds the
+    // last one and the message shrinks away over successive reports.
+    document.body.style.transform = '';
+    var natural = document.body.scrollWidth;
+    scale = natural > window.innerWidth ? window.innerWidth / natural : 1;
+    document.body.style.transform = scale < 1 ? 'scale(' + scale + ')' : '';
+  }
+  function report() {
+    fit();
+    window.ReactNativeWebView.postMessage(
+      String(Math.ceil(document.body.scrollHeight * scale)),
+    );
+  }
+  report();
+  window.addEventListener('load', report);
+  // Images and web fonts settle after load, and each one changes the height.
+  // Without this the view keeps the height it measured before the pictures
+  // arrived and clips the rest of the message.
+  if (window.ResizeObserver) {
+    new ResizeObserver(report).observe(document.body);
+  }
 </script>
 </body></html>`;
 

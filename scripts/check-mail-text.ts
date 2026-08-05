@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import {
   isEmail,
   parseAddressList,
+  htmlAddsNothing,
   stripUnsubscribeFooter,
   stripUnsubscribeFooterHtml,
   textToHtml,
@@ -136,6 +137,41 @@ assert.equal(
   stripUnsubscribeFooterHtml('<p>Hi</p>'),
   '<p>Hi</p>',
   'html without a footer is untouched',
+);
+
+
+
+// --- which part of a multipart message to render ----------------------------
+
+assert.ok(
+  htmlAddsNothing('<p>Hello there.</p>', 'Hello there.'),
+  'a paragraph wrapper adds nothing over the text part',
+);
+assert.ok(
+  htmlAddsNothing(
+    '<p>One</p>\n<p>Two<br>Three</p>',
+    'One\n\nTwo\nThree',
+  ),
+  'our own textToHtml output round-trips back to its source',
+);
+assert.ok(
+  htmlAddsNothing('<p>a &amp; b &lt;c&gt;</p>', 'a & b <c>'),
+  'entities decode back to the text they escaped',
+);
+assert.ok(
+  !htmlAddsNothing(
+    '<table width="600"><tr><td><img src="https://x/p.gif">Sale!</td></tr></table>',
+    'Sale!',
+  ),
+  'a laid-out newsletter is not equivalent to its text skeleton',
+);
+assert.ok(
+  !htmlAddsNothing('<p>Full message here.</p>', 'View this email in your browser'),
+  'a stub text part must not win over real HTML',
+);
+assert.ok(
+  !htmlAddsNothing('<p>Anything</p>', '   '),
+  'an empty text part is never equivalent',
 );
 
 console.log('mail-text: all checks passed');
