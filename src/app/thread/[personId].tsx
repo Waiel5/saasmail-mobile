@@ -85,19 +85,18 @@ function MessageCard({ message, chatMode }: { message: Message; chatMode: boolea
         style={{
           alignSelf: outbound ? 'flex-end' : 'flex-start',
           maxWidth: width * 0.82,
-          backgroundColor: outbound ? c.primary : c.backgroundSubtle,
+          backgroundColor: outbound ? c.outboundBubble : c.backgroundSubtle,
           borderRadius: Radius.xxl,
           borderCurve: 'continuous',
           paddingHorizontal: Spacing.three,
           paddingVertical: Spacing.two,
           gap: Spacing.one,
         }}>
-        <MessageBody message={message} tint={outbound ? c.onPrimary : c.text} />
+        <MessageBody message={message} tint={c.text} />
         <Text
           style={{
             ...Type.caption,
-            color: outbound ? c.onPrimary : c.textTertiary,
-            opacity: outbound ? 0.7 : 1,
+            color: c.textTertiary,
             alignSelf: 'flex-end',
           }}>
           {formatMessageTime(message.createdAt)}

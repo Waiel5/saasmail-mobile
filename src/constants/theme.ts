@@ -48,10 +48,21 @@ export const Colors = {
 
     /** hsl(75 100% 32%) — CTAs and the send action. */
     primary: '#7AA300',
-    /** Text and icons drawn on `primary`. */
-    onPrimary: '#FFFFFF',
+    /**
+     * Near-black, not white. White on this lime measures 2.97:1, which fails
+     * even the 3:1 floor for large text — the send button was genuinely hard
+     * to read. This is 6.04:1.
+     */
+    onPrimary: '#101A00',
     /** hsl(75 70% 94%) — selected chips, subtle emphasis. */
     primarySubtle: '#F0FADB',
+    /**
+     * Sent-message bubbles: a lime *tint*, not the solid brand colour. A column
+     * of solid-lime bubbles is exhausting to read and drags the eye away from
+     * the unread dot, which is the only signal in the list that carries
+     * meaning. Body text sits on this at full contrast.
+     */
+    outboundBubble: '#F3F7E9',
 
     /**
      * hsl(254 95% 55%). Reserved for unread dots and focus rings only. Spending
@@ -82,6 +93,7 @@ export const Colors = {
     /** Dark text on bright lime; white would be unreadable. */
     onPrimary: '#0B0D10',
     primarySubtle: '#20260F',
+    outboundBubble: '#343922',
 
     /** hsl(254 95% 70%) — same hue, lifted for a dark surface. */
     unread: '#8C6AFB',
