@@ -50,14 +50,60 @@ export default function InboxScreen() {
 
   const rows = query.data?.data ?? [];
 
+  const setFilter = async (next: boolean) => {
+    if (process.env.EXPO_OS === "ios") await Haptics.selectionAsync();
+    setUnreadOnly(next);
+  };
+
   return (
     <>
       <Stack.Screen
         options={{
+          // `title` is set empty as well as supplying `headerTitle`: the
+          // custom component replaces the title view, but the route name
+          // ("index") still renders behind it otherwise.
+          title: "",
           headerTitle: () => <ServerSwitcherTitle />,
           headerTransparent: true,
         }}
       />
+      {/*
+        A named filter, not a nameless mode.
+
+        Mail puts its filter bottom-left, but it earns that slot by expanding
+        into a labelled "Filtered by / Unread" capsule when active. A
+        UIBarButtonItem cannot do that — set `icon` and the title is dropped and
+        kept only for VoiceOver — so an icon-only toggle down there means
+        tapping it empties the list with nothing on screen saying why. The one
+        thing a filter must never be is silently on.
+
+        A menu names both states and marks the chosen one, and the filled glyph
+        shows at a glance that filtering is active.
+      */}
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Menu
+          accessibilityLabel="Filter messages"
+          icon={
+            unreadOnly
+              ? "line.3.horizontal.decrease.circle.fill"
+              : "line.3.horizontal.decrease.circle"
+          }
+        >
+          <Stack.Toolbar.MenuAction
+            isOn={!unreadOnly}
+            onPress={() => setFilter(false)}
+          >
+            All
+          </Stack.Toolbar.MenuAction>
+          <Stack.Toolbar.MenuAction
+            isOn={unreadOnly}
+            onPress={() => setFilter(true)}
+          >
+            Unread
+          </Stack.Toolbar.MenuAction>
+        </Stack.Toolbar.Menu>
+      </Stack.Toolbar>
+
       <Stack.SearchBar
         placeholder="Search people and addresses"
         onChangeText={(e) => setSearch(e.nativeEvent.text)}
@@ -107,14 +153,6 @@ export default function InboxScreen() {
         behaviour and the accessibility semantics for free.
       */}
       <Stack.Toolbar placement="bottom">
-        <Stack.Toolbar.Button
-          icon="line.3.horizontal.decrease"
-          selected={unreadOnly}
-          onPress={async () => {
-            if (process.env.EXPO_OS === "ios") await Haptics.selectionAsync();
-            setUnreadOnly((v) => !v);
-          }}
-        />
         <Stack.Toolbar.Spacer />
         <Stack.Toolbar.SearchBarSlot />
         <Stack.Toolbar.Button
