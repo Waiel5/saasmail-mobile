@@ -90,10 +90,19 @@ export default function ComposeScreen() {
       // whose ordering and preview it changes.
       queryClient.invalidateQueries({ queryKey: key(server!.id) });
 
-      // "Sent" is not the only success. A transient provider failure is queued
-      // and retried, and a suppressed recipient is deliberately not delivered —
-      // reporting either as sent is how someone waits on a reply that is never
-      // coming.
+      // A 201 is not the same as delivered. The route answers 201 for every
+      // outcome it can describe and puts the outcome in `status`, so treating
+      // the HTTP code as the answer reports "sent" for mail that was rejected,
+      // queued, or deliberately withheld. Each one is handled by name, and the
+      // draft is kept on screen whenever the message did not actually leave —
+      // dismissing the composer would discard the only copy of it.
+      if (result.status === 'failed') {
+        Alert.alert(
+          'Not sent',
+          'The mail provider rejected this message. If this server has no outbound provider configured yet, sending will fail until one is set up.',
+        );
+        return;
+      }
       if (result.status === 'suppressed') {
         Alert.alert(
           'Not delivered',

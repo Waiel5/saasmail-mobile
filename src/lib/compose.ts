@@ -30,7 +30,11 @@ export interface Draft {
 
 export interface SentResult {
   id: string | null;
-  status: string;
+  /**
+   * The actual outcome. Every one of these comes back with HTTP 201, so the
+   * status code says the request was understood, not that mail was delivered.
+   */
+  status: 'sent' | 'suppressed' | 'retrying' | 'failed';
   suppressed?: string[];
 }
 
