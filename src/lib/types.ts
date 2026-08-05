@@ -60,11 +60,26 @@ export interface Message {
   recipient?: string;
   fromAddress?: string;
   toAddress?: string;
-  /** Received only; null on sent rows. */
-  isRead: boolean | null;
+  /**
+   * Received only; null on sent rows.
+   *
+   * A number, not a boolean — SQLite has no boolean type and the schema is
+   * `z.number().nullable()`, so this arrives as 0 or 1.
+   */
+  isRead: number | null;
   /** Sent only. */
   status?: string | null;
-  createdAt: number;
+  /**
+   * Epoch seconds. Named `timestamp` server-side, unifying `received_at` on
+   * inbound rows with `sent_at` on outbound ones so the two can interleave.
+   *
+   * This was previously transcribed as `createdAt`, which exists on the
+   * attachment rows but not on a message. The result was `undefined`: the
+   * header rendered "Invalid Date", and — quietly, which was worse — the
+   * thread's `sort` compared `NaN` to `NaN` and left the order untouched.
+   */
+  timestamp: number;
+  attachmentCount?: number;
   attachments?: Attachment[];
 }
 

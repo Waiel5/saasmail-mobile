@@ -73,6 +73,13 @@ export default function RootLayout() {
               // — set from inside the route it is read too late to change how
               // the screen was pushed.
               presentation: 'modal',
+              // Overrides the transparent header the rest of the app uses.
+              // Transparent is right for a scrolling list, where content
+              // sliding under a blur is the effect; here it put the From row
+              // directly beneath the title, hidden behind it, with no scroll
+              // available to reveal it — the first field of the form was
+              // simply invisible.
+              headerTransparent: false,
               contentStyle: {
                 backgroundColor:
                   colorScheme === 'dark'

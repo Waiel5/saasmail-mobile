@@ -46,7 +46,7 @@ export default function ThreadScreen() {
 
   const messages = query.data?.emails ?? [];
   // Oldest first, so the newest message is where the scroll lands.
-  const ordered = [...messages].sort((a, b) => a.createdAt - b.createdAt);
+  const ordered = [...messages].sort((a, b) => a.timestamp - b.timestamp);
   const chatMode = query.data?.inboxes?.[0]?.displayMode === 'chat';
   const latestInbound = [...ordered]
     .reverse()
@@ -62,25 +62,20 @@ export default function ThreadScreen() {
       <Stack.Screen options={{ title, headerBackButtonDisplayMode: 'minimal' }} />
 
       {/*
-        Reply targets the newest *received* message, not the newest message.
-        `POST /api/send/reply/{emailId}` needs something that arrived — replying
-        to your own last sent message is not a thing the endpoint can do, and
-        picking `ordered.at(-1)` blindly hands it a sent id whenever the last
-        word was yours, which is most of the time in a support mailbox.
-
-        Its `recipient` is the inbox the mail came in on, which is also the
-        address it should go back out from. Passing it means the composer opens
-        on the right identity instead of making the user pick it again — or,
-        worse, defaulting to the wrong one and answering a customer from an
-        address they have never seen.
-      */}
-      {/*
         The same grammar as the inbox: contextual action on the left, compose
-        detached on the right. Mail does this too — the compose button stays in
+        detached on the right. Mail does this too — its compose button stays in
         the corner on the message screen as well as the list, so "write
         something new" is never more than one tap from anywhere. Keeping the
         two bars structurally identical means the corner your thumb has learned
         does not change meaning when you open a conversation.
+
+        Reply targets the newest *received* message, not the newest message.
+        `POST /api/send/reply/{emailId}` needs something that arrived, and
+        taking `ordered.at(-1)` blindly hands it a sent id whenever the last
+        word was yours — which in a support mailbox is most of the time. Its
+        `recipient` is the inbox the mail came in on, so passing it opens the
+        composer on the address the sender actually wrote to rather than on
+        whichever identity happens to sort first.
 
         Deliberately no trash. Mail's message view can offer one because it is
         showing exactly one message; this screen is a whole timeline with a
@@ -170,7 +165,7 @@ function MessageCard({ message, chatMode }: { message: Message; chatMode: boolea
             color: c.textTertiary,
             alignSelf: 'flex-end',
           }}>
-          {formatMessageTime(message.createdAt)}
+          {formatMessageTime(message.timestamp)}
         </Text>
       </View>
     );
@@ -195,7 +190,7 @@ function MessageCard({ message, chatMode }: { message: Message; chatMode: boolea
         <Text style={{ ...Type.footnote, color: c.textSecondary }}>
           {outbound ? `To ${message.toAddress ?? ''}` : `From ${message.fromAddress ?? ''}`}
           {' · '}
-          {formatMessageTime(message.createdAt)}
+          {formatMessageTime(message.timestamp)}
         </Text>
       </View>
       <MessageBody message={message} tint={c.text} />
