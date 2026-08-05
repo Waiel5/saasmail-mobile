@@ -4,6 +4,7 @@ import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { HAIRLINE, Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { deleteDraftsForServer } from '@/lib/drafts';
 import { forgetServer } from '@/lib/query';
 import { removeServer, setActiveServerId, type ServerRecord } from '@/lib/servers';
 import { useActiveServerId, useServers } from '@/lib/use-servers';
@@ -28,6 +29,11 @@ export default function SettingsScreen() {
           style: 'destructive',
           onPress: async () => {
             await forgetServer(server.id);
+            // Before the record goes, while the id is still meaningful.
+            // Orphaned drafts are addressed from an account the app can no
+            // longer send through, and would silently reappear if the same
+            // deployment were added again.
+            deleteDraftsForServer(server.id);
             await removeServer(server.id);
           },
         },
