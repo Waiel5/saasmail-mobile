@@ -211,7 +211,7 @@ export function InboxRowItem({
     the same reason.
   */
   const content = (
-    <Link href={`/thread/${row.id}?type=${row.type}`}>
+    <Link href={`/thread/${row.id}?type=${row.type}`} asChild>
       <Link.Trigger>
       {/*
         Layout lives on the inner View, not on the Pressable's style function.

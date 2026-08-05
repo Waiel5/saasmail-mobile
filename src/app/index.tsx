@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { Stack, useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -19,8 +19,9 @@ import { Radius, Spacing, Type } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
 import { ApiError, apiFetch } from "@/lib/api";
 import { key } from "@/lib/query";
-import type { GroupedResponse } from "@/lib/types";
+import type { GroupedResponse, Me } from "@/lib/types";
 import { useDrafts } from "@/lib/use-drafts";
+import { upsertServer } from "@/lib/servers";
 import { useActiveServer } from "@/lib/use-servers";
 
 export default function InboxScreen() {
@@ -48,6 +49,31 @@ export default function InboxScreen() {
           (trimmed ? `&q=${encodeURIComponent(trimmed)}` : ""),
       ),
   });
+
+  /*
+    Re-read who this account is, rather than trusting what it was.
+
+    `ServerRecord.role` is written once, when the server is added, and the
+    admin surface is gated on it. A snapshot is wrong in both directions: an
+    account promoted after connecting never sees the admin screens, and one
+    demoted afterwards keeps a Delete swipe on every row until it signs out and
+    back in. The server answers this cheaply and is the only authority on it —
+    every `/api/admin/*` route re-checks regardless, so the gate is about not
+    offering a door that opens onto a 403, not about enforcement.
+  */
+  const me = useQuery({
+    queryKey: key(server?.id ?? "none", "me"),
+    enabled: !!server,
+    queryFn: () => apiFetch<Me>(server!.id, "/api/user/me"),
+    staleTime: 5 * 60_000,
+  });
+
+  useEffect(() => {
+    if (!server || !me.data) return;
+    const role = me.data.role ?? undefined;
+    if (role === server.role) return;
+    upsertServer({ ...server, role });
+  }, [me.data, server]);
 
   if (!server) return <FirstRun />;
 
