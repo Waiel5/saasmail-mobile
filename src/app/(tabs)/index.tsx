@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
-import { Redirect, Stack, useRouter } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 
@@ -19,18 +19,19 @@ export default function InboxScreen() {
   const server = useActiveServer();
   const [unreadOnly, setUnreadOnly] = useState(false);
 
-  // No server yet — the app has nothing to show until one is added, so this is
-  // the first run rather than an empty inbox.
-  if (!server) return <Redirect href="/add-server" />;
-
   const query = useQuery({
-    queryKey: key(server.id, 'people', 'grouped', unreadOnly ? 'unread' : 'all'),
+    queryKey: key(server?.id ?? 'none', 'people', 'grouped', unreadOnly ? 'unread' : 'all'),
+    enabled: !!server,
     queryFn: () =>
       apiFetch<GroupedResponse>(
-        server.id,
+        server!.id,
         `/api/people/grouped?limit=50${unreadOnly ? '&unread=1' : ''}`,
       ),
   });
+
+  // First run. This is the onboarding rather than an error: the app cannot
+  // show mail until it knows which deployment to ask.
+  if (!server) return <FirstRun />;
 
   const rows = query.data?.data ?? [];
 
@@ -138,6 +139,47 @@ function EmptyState({ error, unreadOnly }: { error: unknown; unreadOnly: boolean
       <Text selectable style={{ ...Type.callout, color: c.textSecondary, textAlign: 'center' }}>
         {message}
       </Text>
+    </View>
+  );
+}
+
+/**
+ * What a brand-new install sees.
+ *
+ * Deliberately not a redirect into the add-server sheet: a sheet presented over
+ * an empty stack has nothing behind it and reads as a blank screen. This is a
+ * real first screen, and it explains *why* an address is needed — self-hosting
+ * is the part of this product a newcomer will not assume.
+ */
+function FirstRun() {
+  const c = useTheme();
+  const router = useRouter();
+  return (
+    <View
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: Spacing.four,
+        paddingHorizontal: Spacing.six,
+      }}>
+      <Image source="sf:tray.and.arrow.down" tintColor={c.primary} style={{ width: 52, height: 52 }} />
+      <Text style={{ ...Type.title, color: c.text, textAlign: 'center' }}>Connect your mail</Text>
+      <Text style={{ ...Type.callout, color: c.textSecondary, textAlign: 'center' }}>
+        saasmail runs on your own Cloudflare account, so there is no account to sign up for. Point
+        the app at your deployment and sign in there.
+      </Text>
+      <Pressable
+        onPress={() => router.push('/add-server')}
+        style={({ pressed }) => ({
+          paddingHorizontal: Spacing.six,
+          paddingVertical: Spacing.three,
+          borderRadius: 999,
+          backgroundColor: c.primary,
+          opacity: pressed ? 0.85 : 1,
+        })}>
+        <Text style={{ ...Type.headline, color: c.onPrimary }}>Add a server</Text>
+      </Pressable>
     </View>
   );
 }

@@ -16,6 +16,11 @@ export default function SearchScreen() {
   const server = useActiveServer();
   const [q, setQ] = useState('');
 
+  // NativeTabs mounts every tab at once, so this renders on first launch —
+  // before any server exists — even while the Inbox tab is the visible one.
+  // The inbox redirects to onboarding in that state; search must simply be
+  // harmless rather than assert a server it does not have.
+
   const query = useQuery({
     queryKey: key(server?.id ?? 'none', 'search', q),
     // The server filters by name and email; searching an empty string would
@@ -23,7 +28,7 @@ export default function SearchScreen() {
     enabled: !!server && q.trim().length > 1,
     queryFn: () =>
       apiFetch<GroupedResponse>(
-        server!.id,
+        server?.id ?? '',
         `/api/people/grouped?limit=50&q=${encodeURIComponent(q.trim())}`,
       ),
   });
@@ -47,11 +52,17 @@ export default function SearchScreen() {
         contentInsetAdjustmentBehavior="automatic"
         keyboardDismissMode="on-drag"
         ItemSeparatorComponent={RowSeparator}
-        renderItem={({ item }) => <InboxRowItem row={item} serverId={server!.id} />}
+        renderItem={({ item }) =>
+          server ? <InboxRowItem row={item} serverId={server.id} /> : null
+        }
         ListEmptyComponent={
           <View style={{ paddingTop: Spacing.seven, paddingHorizontal: Spacing.six }}>
             <Text style={{ ...Type.callout, color: c.textSecondary, textAlign: 'center' }}>
-              {q.trim().length > 1 ? 'Nobody matches that.' : 'Search for a person or address.'}
+              {!server
+                ? 'Add a server to search your mail.'
+                : q.trim().length > 1
+                  ? 'Nobody matches that.'
+                  : 'Search for a person or address.'}
             </Text>
           </View>
         }

@@ -108,14 +108,33 @@ export function subscribe(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
+/**
+ * Parsed snapshot, cached against the raw string it came from.
+ *
+ * `useSyncExternalStore` compares snapshots by identity and re-renders whenever
+ * it sees a new one. Parsing on every call returns a fresh array each time, so
+ * React would re-render, call this again, get another new array, and loop until
+ * it bails out with "Maximum update depth exceeded" — which is exactly what
+ * happened. The cache makes the reference stable while the stored value is
+ * unchanged, and new only when it genuinely changed.
+ */
+let snapshotRaw: string | null = null;
+let snapshot: ServerRecord[] = [];
+
 export function listServers(): ServerRecord[] {
   const raw = localStorage.getItem(SERVERS_KEY);
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw) as ServerRecord[];
-  } catch {
-    return [];
+  if (raw === snapshotRaw) return snapshot;
+  snapshotRaw = raw;
+  if (!raw) {
+    snapshot = [];
+    return snapshot;
   }
+  try {
+    snapshot = JSON.parse(raw) as ServerRecord[];
+  } catch {
+    snapshot = [];
+  }
+  return snapshot;
 }
 
 export function getServer(id: string): ServerRecord | undefined {
@@ -132,7 +151,10 @@ export function setActiveServerId(id: string): void {
 }
 
 export function upsertServer(record: ServerRecord): void {
-  const servers = listServers();
+  // Copy rather than mutate: `listServers()` hands back the cached snapshot,
+  // which React may still be rendering from. Editing it in place would change
+  // what is on screen without any re-render having been requested.
+  const servers = [...listServers()];
   const i = servers.findIndex((s) => s.id === record.id);
   if (i >= 0) servers[i] = { ...servers[i], ...record };
   else servers.push(record);
