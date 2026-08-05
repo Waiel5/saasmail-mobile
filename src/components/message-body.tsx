@@ -1,31 +1,55 @@
-import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { randomUUID } from 'expo-crypto';
+import { Image } from 'expo-image';
+import { useMemo, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
-import { Spacing, Type } from '@/constants/theme';
+import { Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { Message } from '@/lib/types';
 
 /**
  * Render a message body.
  *
- * Email HTML is attacker-authored by definition — anyone can send mail — so the
- * WebView is locked down rather than merely sandboxed by convention:
+ * Email HTML is attacker-authored by definition — anyone can send mail to an
+ * inbox — so the containing document, not the WebView's defaults, is what has
+ * to hold the line. A Content-Security-Policy in the head does that:
  *
- *  - JavaScript is off. There is no email that legitimately needs it, and it is
- *    the difference between rendering hostile content and executing it.
- *  - Navigation is blocked. A tap must never silently replace the message with
- *    a page of the sender's choosing.
- *  - Remote content is not loaded. Tracking pixels are the default in
- *    marketing mail, and loading them reports the read back to the sender
- *    along with an IP address.
+ *   default-src 'none'   nothing loads unless named below. This is what stops
+ *                        tracking pixels, remote fonts, iframes and — because
+ *                        it also covers connect-src — a script's attempt to
+ *                        `fetch()` the message body out to a server.
+ *   script-src 'nonce-…' only the measuring script below runs. A `<script>` in
+ *                        the message has no nonce and is refused.
+ *   style-src            inline CSS is how email has always been styled, so it
+ *                        is allowed; with default-src none, a `url()` inside it
+ *                        still cannot fetch anything.
+ *   img-src data:        inline images render; remote ones are the tracking
+ *                        vector and are opt-in per message.
  *
- * Plain text is preferred when the message carries it, because it needs none of
- * the above and lays out better on a phone.
+ * This replaces an earlier arrangement that relied on `originWhitelist` and
+ * `onShouldStartLoadWithRequest`. Both are real, but both govern *navigation* —
+ * they never applied to subresources, so remote images loaded and reported the
+ * read back to the sender, and an inline `<script>` shared a document with the
+ * measuring script and ran with it.
+ *
+ * Plain text is preferred when the message carries it: it needs none of this
+ * and lays out better on a phone.
  */
 export function MessageBody({ message, tint }: { message: Message; tint: string }) {
   const c = useTheme();
   const [height, setHeight] = useState(0);
+  const [loadRemote, setLoadRemote] = useState(false);
+
+  // One nonce per mounted message. It only has to be unguessable to the person
+  // who wrote the HTML, and they wrote it before this existed.
+  const nonce = useMemo(() => randomUUID(), []);
+
+  const bodyHtml = message.bodyHtml?.trim();
+  const hasRemoteContent = useMemo(
+    () => (bodyHtml ? /<img[^>]+src\s*=\s*["']?https?:/i.test(bodyHtml) : false),
+    [bodyHtml],
+  );
 
   if (message.bodyText?.trim()) {
     return (
@@ -35,7 +59,7 @@ export function MessageBody({ message, tint }: { message: Message; tint: string 
     );
   }
 
-  if (!message.bodyHtml?.trim()) {
+  if (!bodyHtml) {
     return (
       <Text style={{ ...Type.body, color: c.textTertiary, fontStyle: 'italic' }}>
         (no content)
@@ -43,9 +67,12 @@ export function MessageBody({ message, tint }: { message: Message; tint: string 
     );
   }
 
-  // The document is composed here rather than injected into the message so the
-  // colour scheme and width come from us, not from the sender's stylesheet.
+  const imgSrc = loadRemote ? 'data: https:' : 'data:';
+
+  // The document is composed here rather than the message being injected into
+  // one, so the colour scheme, the width and the policy all come from us.
   const html = `<!doctype html><html><head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src ${imgSrc};">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { color-scheme: ${c.background === '#FCFCFC' ? 'light' : 'dark'}; }
@@ -62,11 +89,11 @@ export function MessageBody({ message, tint }: { message: Message; tint: string 
     margin: 0 0 0 8px; padding-left: 10px;
     border-left: 2px solid ${c.border}; color: ${c.textSecondary};
   }
-</style></head><body>${message.bodyHtml}
-<script>
-  // Reports content height once so the WebView can size to it — a fixed height
-  // either clips the message or leaves dead space under short ones. This is the
-  // page we authored; the sender's own scripts never run.
+</style></head><body>${bodyHtml}
+<script nonce="${nonce}">
+  // Reports content height so the WebView can size to it — a fixed height
+  // either clips the message or leaves dead space under short ones. Images
+  // settle after load, so this reports again then.
   function report(){ window.ReactNativeWebView.postMessage(String(document.body.scrollHeight)); }
   report(); window.addEventListener('load', report);
 </script>
@@ -74,14 +101,44 @@ export function MessageBody({ message, tint }: { message: Message; tint: string 
 
   return (
     <View style={{ minHeight: 24 }}>
+      {hasRemoteContent && !loadRemote ? (
+        // Named, not silent. A message that renders with holes in it and no
+        // explanation reads as a broken client rather than as a decision made
+        // on the reader's behalf.
+        <Pressable
+          onPress={() => setLoadRemote(true)}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: Spacing.two,
+            paddingHorizontal: Spacing.three,
+            paddingVertical: Spacing.two,
+            borderRadius: Radius.full,
+            alignSelf: 'flex-start',
+            backgroundColor: c.backgroundSubtle,
+            opacity: pressed ? 0.7 : 1,
+          })}>
+          <Image
+            source="sf:eye.slash"
+            tintColor={c.textSecondary}
+            style={{ width: 14, height: 14 }}
+          />
+          <Text style={{ ...Type.footnote, color: c.textSecondary }}>
+            Remote images blocked · Load
+          </Text>
+        </Pressable>
+      ) : null}
+
       <WebView
+        // `key` on the policy so toggling images rebuilds the document rather
+        // than relying on the WebView to re-evaluate a CSP it already applied.
+        key={imgSrc}
         originWhitelist={['about:blank']}
         source={{ html, baseUrl: '' }}
-        // Only our measuring script runs; the message's own scripts are stripped
-        // of a runtime by loading with JS disabled for remote content.
         javaScriptEnabled
         onMessage={(e) => setHeight(Number(e.nativeEvent.data) || 0)}
-        // Nothing in a message may navigate the view away from the message.
+        // Belt to the CSP's braces: nothing in a message may navigate the view
+        // away from the message.
         onShouldStartLoadWithRequest={(req) => req.url === 'about:blank'}
         setSupportMultipleWindows={false}
         allowsInlineMediaPlayback={false}
