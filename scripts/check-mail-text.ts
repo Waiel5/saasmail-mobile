@@ -13,6 +13,8 @@ import assert from 'node:assert/strict';
 import {
   isEmail,
   parseAddressList,
+  stripUnsubscribeFooter,
+  stripUnsubscribeFooterHtml,
   textToHtml,
   withSignature,
 } from '../src/lib/mail-text.ts';
@@ -96,5 +98,44 @@ assert.ok(isEmail('  a@x.com  '), 'surrounding whitespace is tolerated');
 assert.ok(!isEmail('a@x'), 'a bare hostname is rejected');
 assert.ok(!isEmail('a b@x.com'), 'internal whitespace is rejected');
 assert.ok(!isEmail(''));
+
+// --- unsubscribe footer ---------------------------------------------------
+
+const UNSUB = 'https://x.dev/unsubscribe?token=eyJlIjoiYUB4LmNvbSJ9.abc_-DEF';
+
+assert.equal(
+  stripUnsubscribeFooter(`Hello there.\n\n---\nUnsubscribe: ${UNSUB}`),
+  'Hello there.',
+  'the appended footer is hidden from the sender’s own view',
+);
+assert.equal(
+  stripUnsubscribeFooter('Hello there.'),
+  'Hello there.',
+  'a body without a footer is untouched',
+);
+// A received newsletter's own footer is the sender's content, not ours.
+assert.equal(
+  stripUnsubscribeFooter('Deal inside!\n\nUnsubscribe: https://them.example/u/9'),
+  'Deal inside!\n\nUnsubscribe: https://them.example/u/9',
+  'someone else’s unsubscribe line is left alone',
+);
+assert.equal(
+  stripUnsubscribeFooter(`A\n\n---\nUnsubscribe: ${UNSUB}\n\nPS`),
+  `A\n\n---\nUnsubscribe: ${UNSUB}\n\nPS`,
+  'only a trailing footer is removed, never mid-body text',
+);
+
+assert.equal(
+  stripUnsubscribeFooterHtml(
+    `<p>Hi</p><hr/>\n<p style="font-size:12px;color:#666"><a href="${UNSUB}">Unsubscribe</a></p>`,
+  ),
+  '<p>Hi</p>',
+  'the html footer is hidden too',
+);
+assert.equal(
+  stripUnsubscribeFooterHtml('<p>Hi</p>'),
+  '<p>Hi</p>',
+  'html without a footer is untouched',
+);
 
 console.log('mail-text: all checks passed');

@@ -59,6 +59,36 @@ export function textToHtml(text: string): string {
 }
 
 /**
+ * Hide the unsubscribe footer saasmail appends on the way out.
+ *
+ * `lib/send.ts` adds a fixed footer to every outbound message — three dashes
+ * and a signed URL in the text part, an `<hr>` and a link in the HTML one. It
+ * belongs in the delivered mail; it does not belong in the sender's own view
+ * of their conversation, where it is machine-written boilerplate, identical on
+ * every message, and in the text part several lines longer than most replies.
+ *
+ * The patterns are anchored to the end and match saasmail's exact output
+ * rather than unsubscribe footers in general. A received newsletter keeps its
+ * own footer: that one is the sender's content and hiding it would be editing
+ * someone else's mail.
+ *
+ * Note the separator is `---`, not the RFC 3676 `-- `, so the web app's
+ * signature stripper does not catch it either.
+ */
+export function stripUnsubscribeFooter(text: string): string {
+  return text.replace(/\n{2,}---\nUnsubscribe:\s*\S+\s*$/, '').trimEnd();
+}
+
+export function stripUnsubscribeFooterHtml(html: string): string {
+  return html
+    .replace(
+      /<hr\s*\/?>\s*<p[^>]*>\s*<a[^>]*>\s*Unsubscribe\s*<\/a>\s*<\/p>\s*$/i,
+      '',
+    )
+    .trimEnd();
+}
+
+/**
  * Append the inbox's signature, exactly as the web composer does.
  *
  * saasmail stores `signatureHtml` per inbox but never applies it on send — the

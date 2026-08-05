@@ -37,6 +37,18 @@ export default function RootLayout() {
           <Stack.Screen name="index" options={{ headerLargeTitle: false }} />
           <Stack.Screen name="settings" options={{ title: "Settings" }} />
           <Stack.Screen
+            name="drafts"
+            options={{
+              title: "Drafts",
+              // Opaque, unlike the rest of the app. The list is a SwiftUI
+              // `List` inside a host view rather than a React Native scroll
+              // view, so `contentInsetAdjustmentBehavior` — the prop every
+              // other screen uses to start its content below a transparent bar
+              // — has nothing here to attach to.
+              headerTransparent: false,
+            }}
+          />
+          <Stack.Screen
             name="add-server"
             options={{
               // A sheet rather than a full screen: adding a server is a side

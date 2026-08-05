@@ -11,20 +11,23 @@ import {
   Text,
   View,
 } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 
-import { InboxRowItem, RowSeparator } from "@/components/inbox-row";
+import { DraftsRow, InboxRowItem, RowSeparator } from "@/components/inbox-row";
 import { ServerSwitcherTitle } from "@/components/server-switcher";
 import { Radius, Spacing, Type } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
 import { ApiError, apiFetch } from "@/lib/api";
 import { key } from "@/lib/query";
 import type { GroupedResponse } from "@/lib/types";
+import { useDrafts } from "@/lib/use-drafts";
 import { useActiveServer } from "@/lib/use-servers";
 
 export default function InboxScreen() {
   const c = useTheme();
   const router = useRouter();
   const server = useActiveServer();
+  const drafts = useDrafts(server?.id);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -68,6 +71,25 @@ export default function InboxScreen() {
         }}
       />
       {/*
+        Admin takes the navigation bar's leading slot rather than a place in
+        the filter menu opposite it. That menu is a filter — its glyph fills to
+        show filtering is on — and hanging a destination off it would make one
+        control mean two things. It is absent rather than disabled for members:
+        `/api/admin/*` answers 403 to them, so the button would be a door onto
+        a wall. The record's `role` is advisory (the server enforces its own),
+        which is exactly why this only decides what to draw.
+      */}
+      {server.role === "admin" ? (
+        <Stack.Toolbar placement="left">
+          <Stack.Toolbar.Button
+            icon="lock.shield"
+            accessibilityLabel="Server admin"
+            onPress={() => router.push("/admin")}
+          />
+        </Stack.Toolbar>
+      ) : null}
+
+      {/*
         A named filter, not a nameless mode.
 
         Mail puts its filter bottom-left, but it earns that slot by expanding
@@ -109,37 +131,59 @@ export default function InboxScreen() {
         onChangeText={(e) => setSearch(e.nativeEvent.text)}
       />
 
-      <FlatList
-        data={rows}
-        keyExtractor={(row) => `${row.type}:${row.id}`}
-        contentInsetAdjustmentBehavior="automatic"
-        keyboardDismissMode="on-drag"
-        ItemSeparatorComponent={RowSeparator}
-        contentContainerStyle={{ paddingBottom: 96 }}
-        refreshControl={
-          <RefreshControl
-            refreshing={query.isRefetching}
-            onRefresh={() => query.refetch()}
-          />
-        }
-        renderItem={({ item }) => (
-          <InboxRowItem row={item} serverId={server.id} />
-        )}
-        ListEmptyComponent={
-          query.isLoading ? (
-            <View style={{ paddingTop: Spacing.seven, alignItems: "center" }}>
-              <ActivityIndicator />
-            </View>
-          ) : (
-            <EmptyState
-              error={query.error}
-              unreadOnly={unreadOnly}
-              searchTerm={trimmed}
-              onRetry={() => query.refetch()}
+      {/*
+        The gesture root lives on this screen rather than in `_layout`, because
+        this is the only screen with gestures. Nothing else belongs inside it:
+        `react-native-screens` reaches a screen's content scroll view by walking
+        `subviews[0]` downwards, and it is that view which is handed the
+        content-inset adjustment and the scroll-edge effect — so a sibling added
+        above the list here would quietly take both away from it. Dropping the
+        wrapper is worse still: `GestureDetector` throws on mount in development
+        without one.
+      */}
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <FlatList
+          data={rows}
+          keyExtractor={(row) => `${row.type}:${row.id}`}
+          contentInsetAdjustmentBehavior="automatic"
+          keyboardDismissMode="on-drag"
+          ItemSeparatorComponent={RowSeparator}
+          contentContainerStyle={{ paddingBottom: 96 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={query.isRefetching}
+              onRefresh={() => query.refetch()}
             />
-          )
-        }
-      />
+          }
+          // Drafts are unsent mail with nowhere else to be listed, so they sit
+          // above everything received. Absent rather than zeroed when there are
+          // none: the row exists to say something is still waiting to go out.
+          ListHeaderComponent={
+            drafts.length > 0 ? <DraftsRow count={drafts.length} /> : null
+          }
+          renderItem={({ item }) => (
+            <InboxRowItem
+              row={item}
+              serverId={server.id}
+              isAdmin={server.role === "admin"}
+            />
+          )}
+          ListEmptyComponent={
+            query.isLoading ? (
+              <View style={{ paddingTop: Spacing.seven, alignItems: "center" }}>
+                <ActivityIndicator />
+              </View>
+            ) : (
+              <EmptyState
+                error={query.error}
+                unreadOnly={unreadOnly}
+                searchTerm={trimmed}
+                onRetry={() => query.refetch()}
+              />
+            )
+          }
+        />
+      </GestureHandlerRootView>
 
       {/*
         Two capsules with air between them, not one crowded bar.

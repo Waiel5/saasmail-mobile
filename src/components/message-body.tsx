@@ -6,6 +6,10 @@ import { WebView } from 'react-native-webview';
 
 import { Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import {
+  stripUnsubscribeFooter,
+  stripUnsubscribeFooterHtml,
+} from '@/lib/mail-text';
 import type { Message } from '@/lib/types';
 
 /**
@@ -45,16 +49,21 @@ export function MessageBody({ message, tint }: { message: Message; tint: string 
   // who wrote the HTML, and they wrote it before this existed.
   const nonce = useMemo(() => randomUUID(), []);
 
-  const bodyHtml = message.bodyHtml?.trim();
+  const bodyText = message.bodyText
+    ? stripUnsubscribeFooter(message.bodyText).trim()
+    : '';
+  const bodyHtml = message.bodyHtml
+    ? stripUnsubscribeFooterHtml(message.bodyHtml).trim()
+    : '';
   const hasRemoteContent = useMemo(
     () => (bodyHtml ? /<img[^>]+src\s*=\s*["']?https?:/i.test(bodyHtml) : false),
     [bodyHtml],
   );
 
-  if (message.bodyText?.trim()) {
+  if (bodyText) {
     return (
       <Text selectable style={{ ...Type.body, color: tint }}>
-        {message.bodyText.trim()}
+        {bodyText}
       </Text>
     );
   }

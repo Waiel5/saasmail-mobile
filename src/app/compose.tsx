@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -18,9 +18,18 @@ import { HAIRLINE, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError, apiFetch } from '@/lib/api';
 import { draftProblem, sendDraft, type Draft } from '@/lib/compose';
+import { deleteDraft, getDraft, isBlank, saveDraft } from '@/lib/drafts';
 import { key } from '@/lib/query';
 import type { Inbox } from '@/lib/types';
 import { useActiveServer } from '@/lib/use-servers';
+
+/**
+ * How long the composer waits after a keystroke before writing.
+ *
+ * Long enough that a burst of typing is one write, short enough that the pause
+ * to think has already committed the sentence before it.
+ */
+const AUTOSAVE_MS = 600;
 
 /**
  * Writing a message.
@@ -48,8 +57,24 @@ export default function ComposeScreen() {
     subject?: string;
     replyTo?: string;
     from?: string;
+    draftId?: string;
   }>();
-  const isReply = !!params.replyTo;
+
+  /**
+   * The stored draft this screen resumed, read exactly once.
+   *
+   * From here on the composer is the only writer of that row, so reading it
+   * again on a later render would hand the fields back whatever the autosave
+   * last wrote instead of what is being typed.
+   */
+  const [resumed] = useState(() =>
+    params.draftId ? getDraft(params.draftId) : null,
+  );
+
+  // A resumed reply is still a reply: which message is being answered belongs
+  // to the draft, not to how this screen was opened.
+  const replyToEmailId = resumed?.replyToEmailId ?? params.replyTo ?? null;
+  const isReply = !!replyToEmailId;
 
   const inboxes = useQuery({
     queryKey: key(server?.id ?? 'none', 'inboxes'),
@@ -58,11 +83,11 @@ export default function ComposeScreen() {
   });
 
   const [draft, setDraft] = useState<Draft>({
-    to: params.to ?? '',
-    cc: '',
-    from: params.from ?? '',
-    subject: params.subject ?? '',
-    body: '',
+    to: resumed?.to ?? params.to ?? '',
+    cc: resumed?.cc ?? '',
+    from: resumed?.from ?? params.from ?? '',
+    subject: resumed?.subject ?? params.subject ?? '',
+    body: resumed?.body ?? '',
   });
   const options = inboxes.data ?? [];
   // The From address is chosen for the user when there is nothing to choose:
@@ -76,12 +101,83 @@ export default function ComposeScreen() {
   );
 
   const problem = draftProblem({ ...draft, from }, isReply);
-  const isEmpty =
-    !draft.body.trim() && !draft.subject.trim() && !draft.to.trim();
+  const blank = isBlank(draft);
+  // Still holding exactly what it was opened with. Only a resumed draft can be
+  // in this state, and it is worth detecting: opening one is not editing it,
+  // and writing the row back would restamp it to now and move it to the top of
+  // the list for having been read.
+  const unchanged =
+    !!resumed &&
+    draft.to === resumed.to &&
+    draft.cc === resumed.cc &&
+    draft.subject === resumed.subject &&
+    draft.body === resumed.body &&
+    from === resumed.from;
+
+  /**
+   * The stored row this composer owns, and whether it still owns one.
+   *
+   * Refs rather than state: neither is rendered, and a save that re-rendered
+   * would restart the very debounce that produced it. `abandoned` is the one
+   * that earns its keep — a queued save outlives the decision to throw the
+   * draft away, so without it the message writes itself back into the drafts
+   * list a moment after the user watched it leave.
+   */
+  const rowId = useRef(params.draftId);
+  const abandoned = useRef(false);
+
+  const saveNow = useCallback(() => {
+    if (!server || abandoned.current || unchanged) return;
+    // Emptying the composer empties the list too. The row holds text that no
+    // longer exists, and keeping it would mean the only way to be rid of
+    // something already deleted is to delete it a second time.
+    if (blank) {
+      if (rowId.current) {
+        deleteDraft(rowId.current);
+        rowId.current = undefined;
+      }
+      return;
+    }
+    rowId.current = saveDraft({
+      id: rowId.current,
+      serverId: server.id,
+      to: draft.to,
+      cc: draft.cc,
+      from,
+      subject: draft.subject,
+      body: draft.body,
+      replyToEmailId,
+      replyToLabel: resumed?.replyToLabel ?? null,
+    });
+  }, [blank, draft, from, replyToEmailId, resumed, server, unchanged]);
+
+  /**
+   * Autosave.
+   *
+   * Carrying the id is what keeps this to a single row — `saveDraft` upserts on
+   * it — so the delay is about write volume rather than row count: the store is
+   * synchronous SQLite, and a write per keystroke lands on the thread between
+   * the key being pressed and the character appearing.
+   */
+  useEffect(() => {
+    const timer = setTimeout(saveNow, AUTOSAVE_MS);
+    return () => clearTimeout(timer);
+  }, [saveNow]);
+
+  /** Give up the stored row: the message has either left or been thrown away. */
+  const forget = () => {
+    abandoned.current = true;
+    if (rowId.current) deleteDraft(rowId.current);
+  };
 
   const send = useMutation({
     mutationFn: () =>
-      sendDraft(server!.id, { ...draft, from }, selected, params.replyTo),
+      sendDraft(
+        server!.id,
+        { ...draft, from },
+        selected,
+        replyToEmailId ?? undefined,
+      ),
     onSuccess: async (result) => {
       if (process.env.EXPO_OS === 'ios') {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -116,6 +212,10 @@ export default function ComposeScreen() {
           'Your mail provider did not accept the message just now. saasmail has queued it and will retry.',
         );
       }
+      // Only here, where the message has either gone or is queued to go. The
+      // two outcomes above returned with the composer still open, so their text
+      // stays in the drafts list to be fixed and sent again.
+      forget();
       router.back();
     },
     onError: async (error) => {
@@ -132,21 +232,28 @@ export default function ComposeScreen() {
   });
 
   const discard = () => {
-    if (isEmpty) {
+    if (blank) {
+      // Nothing typed: there is nothing to keep and nothing to throw away, so
+      // the sheet would be a question with only one honest answer.
       router.back();
       return;
     }
-    // Mail offers "save as draft" here. saasmail has no draft storage, so
-    // offering it would be a button that loses the message it promised to keep.
+    // Mail's three options, which this screen can finally offer all of: before
+    // there was a draft store, "Save Draft" would have been a button that lost
+    // the message it promised to keep.
     ActionSheetIOS.showActionSheetWithOptions(
       {
-        options: ['Delete draft', 'Keep writing'],
+        options: ['Delete Draft', 'Save Draft', 'Cancel'],
         destructiveButtonIndex: 0,
-        cancelButtonIndex: 1,
-        title: 'This message has not been sent.',
+        cancelButtonIndex: 2,
       },
       (index) => {
-        if (index === 0) router.back();
+        if (index === 2) return;
+        if (index === 0) forget();
+        // Written now rather than on the next tick of the autosave: the screen
+        // is about to unmount and take the pending timer with it.
+        else saveNow();
+        router.back();
       },
     );
   };
@@ -169,7 +276,17 @@ export default function ComposeScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: isReply ? 'Reply' : 'New message' }} />
+      {/*
+        The title tracks the subject as it is typed, as Mail's does. The subject
+        field is the first thing to scroll away once the keyboard is up, and
+        after that the title is the only place the message says what it is
+        about.
+      */}
+      <Stack.Screen
+        options={{
+          title: draft.subject.trim() || (isReply ? 'Reply' : 'New message'),
+        }}
+      />
 
       <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button onPress={discard}>Cancel</Stack.Toolbar.Button>
@@ -215,6 +332,11 @@ export default function ComposeScreen() {
           )}
         </Field>
 
+        {/*
+          Where the caret starts. A new message wants the first field it does
+          not already know the answer to; a reply or a resumed draft wants the
+          body, which is the only part still being written.
+        */}
         {isReply ? null : (
           <Field label="To">
             <TextInput
@@ -226,7 +348,7 @@ export default function ComposeScreen() {
               textContentType="emailAddress"
               autoCapitalize="none"
               autoCorrect={false}
-              autoFocus={!params.to}
+              autoFocus={!resumed && !params.to}
               style={{ ...Type.body, color: c.text, flex: 1, padding: 0 }}
             />
           </Field>
@@ -259,7 +381,7 @@ export default function ComposeScreen() {
               onChangeText={(subject) => setDraft((d) => ({ ...d, subject }))}
               placeholder="Subject"
               placeholderTextColor={c.textTertiary}
-              autoFocus={!!params.to}
+              autoFocus={!resumed && !!params.to}
               style={{ ...Type.body, color: c.text, flex: 1, padding: 0 }}
             />
           </Field>
@@ -271,7 +393,7 @@ export default function ComposeScreen() {
           placeholder={isReply ? 'Write a reply…' : 'Write a message…'}
           placeholderTextColor={c.textTertiary}
           multiline
-          autoFocus={isReply}
+          autoFocus={isReply || !!resumed}
           scrollEnabled={false}
           style={{
             ...Type.body,
@@ -285,7 +407,7 @@ export default function ComposeScreen() {
           }}
         />
 
-        {problem && !isEmpty ? (
+        {problem && !blank ? (
           <Text
             selectable
             style={{

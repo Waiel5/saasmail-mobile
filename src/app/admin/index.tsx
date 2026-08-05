@@ -1,0 +1,231 @@
+import { useQuery } from '@tanstack/react-query';
+import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
+import { Stack, useRouter, type Href } from 'expo-router';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from 'react-native';
+
+import { HAIRLINE, Radius, Spacing, Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { apiFetch } from '@/lib/api';
+import { key } from '@/lib/query';
+import type { Me } from '@/lib/types';
+import { useActiveServer } from '@/lib/use-servers';
+
+interface Area {
+  href: Href;
+  /** `expo-image` renders SF Symbols from an `sf:` source. */
+  icon: string;
+  label: string;
+  /**
+   * Blocklist and suppressions read alike and sit at opposite ends of the mail
+   * path, so the nouns alone are not enough to pick the right screen.
+   */
+  detail: string;
+}
+
+const AREAS: { title: string; items: Area[] }[] = [
+  {
+    title: 'People',
+    items: [
+      {
+        href: '/admin/users',
+        icon: 'sf:person.2',
+        label: 'People',
+        detail: 'Everyone with an account on this server.',
+      },
+      {
+        href: '/admin/invites',
+        icon: 'sf:person.badge.plus',
+        label: 'Invites',
+        detail: 'Invitation links, and the ones still unused.',
+      },
+    ],
+  },
+  {
+    title: 'Mail',
+    items: [
+      {
+        href: '/admin/inboxes',
+        icon: 'sf:tray.2',
+        label: 'Inboxes',
+        detail: 'Addresses that receive mail, and who may read them.',
+      },
+      {
+        href: '/admin/blocklist',
+        icon: 'sf:hand.raised',
+        label: 'Blocklist',
+        detail: 'Senders whose incoming mail is hidden.',
+      },
+      {
+        href: '/admin/suppressions',
+        icon: 'sf:nosign',
+        label: 'Suppressions',
+        detail: 'Addresses this server will not send to.',
+      },
+      {
+        href: '/admin/webhook',
+        icon: 'sf:link',
+        label: 'Webhook',
+        detail: 'Where inbound mail is posted as it arrives.',
+      },
+    ],
+  },
+];
+
+/**
+ * The way in to everything that is configured once for the whole deployment.
+ *
+ * A member never sees the list. Hiding it changes nothing about what is
+ * reachable — every route behind it refuses a member on its own — but showing
+ * it would send someone through six screens that each answer 403, and a 403
+ * explains nothing. One sentence naming the reason is the better failure.
+ */
+export default function AdminScreen() {
+  const router = useRouter();
+  const server = useActiveServer();
+
+  // The stored role is a snapshot taken at sign-in, and the identity fetch is
+  // allowed to fail there, so an admin can be recorded with no role at all.
+  // Asking again is what stops that from reading as "you are not an admin".
+  const me = useQuery({
+    queryKey: key(server?.id ?? 'none', 'me'),
+    enabled: !!server,
+    queryFn: () => apiFetch<Me>(server!.id, '/api/user/me'),
+  });
+  const role = me.data?.role ?? server?.role ?? null;
+
+  return (
+    <>
+      <Stack.Screen options={{ title: 'Admin', headerLargeTitle: true }} />
+
+      {/* The same corner as everywhere else in the app, so it keeps meaning
+          what it meant on the screen before this one. */}
+      <Stack.Toolbar placement="bottom">
+        <Stack.Toolbar.Spacer />
+        <Stack.Toolbar.Button
+          icon="square.and.pencil"
+          accessibilityLabel="New message"
+          separateBackground
+          onPress={async () => {
+            if (process.env.EXPO_OS === 'ios') {
+              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }
+            router.push('/compose');
+          }}
+        />
+      </Stack.Toolbar>
+
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{
+          padding: Spacing.four,
+          gap: Spacing.five,
+          paddingBottom: Spacing.four + 72,
+        }}>
+        {role === 'admin' ? (
+          AREAS.map((group) => (
+            <Group key={group.title} title={group.title}>
+              {group.items.map((area, i) => (
+                <View key={area.label}>
+                  {i > 0 ? <Divider /> : null}
+                  <AreaRow area={area} onPress={() => router.push(area.href)} />
+                </View>
+              ))}
+            </Group>
+          ))
+        ) : me.isLoading ? (
+          <ActivityIndicator style={{ marginTop: Spacing.seven }} />
+        ) : (
+          <NotAnAdmin />
+        )}
+      </ScrollView>
+    </>
+  );
+}
+
+function AreaRow({ area, onPress }: { area: Area; onPress: () => void }) {
+  const c = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.three,
+        padding: Spacing.three,
+        backgroundColor: pressed ? c.backgroundSelected : 'transparent',
+      })}>
+      <Image source={area.icon} tintColor={c.primary} style={{ width: 22, height: 22 }} />
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={{ ...Type.body, color: c.text }}>{area.label}</Text>
+        <Text style={{ ...Type.footnote, color: c.textSecondary }}>{area.detail}</Text>
+      </View>
+      <Image
+        source="sf:chevron.right"
+        tintColor={c.textTertiary}
+        style={{ width: 12, height: 12 }}
+      />
+    </Pressable>
+  );
+}
+
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
+  const c = useTheme();
+  return (
+    <View style={{ gap: Spacing.two }}>
+      <Text
+        style={{
+          ...Type.caption,
+          fontWeight: '600',
+          color: c.textTertiary,
+          textTransform: 'uppercase',
+          letterSpacing: 0.6,
+          paddingHorizontal: Spacing.one,
+        }}>
+        {title}
+      </Text>
+      <View
+        style={{
+          backgroundColor: c.surface,
+          borderRadius: Radius.xl,
+          borderCurve: 'continuous',
+          overflow: 'hidden',
+        }}>
+        {children}
+      </View>
+    </View>
+  );
+}
+
+function Divider() {
+  const c = useTheme();
+  return <View style={{ height: HAIRLINE, backgroundColor: c.border }} />;
+}
+
+function NotAnAdmin() {
+  const c = useTheme();
+  return (
+    <View
+      style={{
+        paddingTop: Spacing.seven,
+        paddingHorizontal: Spacing.four,
+        gap: Spacing.three,
+        alignItems: 'center',
+      }}>
+      <Image source="sf:lock" tintColor={c.textTertiary} style={{ width: 40, height: 40 }} />
+      <Text style={{ ...Type.title, color: c.text, textAlign: 'center' }}>Admins only</Text>
+      <Text style={{ ...Type.callout, color: c.textSecondary, textAlign: 'center' }}>
+        These screens change the whole deployment — who has an account, which addresses receive
+        mail, what is blocked — so this server only allows accounts with the admin role to open
+        them. Ask an admin on this server if you need one.
+      </Text>
+    </View>
+  );
+}
