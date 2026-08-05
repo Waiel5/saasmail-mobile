@@ -136,6 +136,22 @@ async function discover(origin: string): Promise<Discovery> {
   };
 }
 
+/**
+ * RFC 8707 resource indicator, sent on authorize, token and refresh.
+ *
+ * Without it better-auth issues an *opaque* access token, which cannot be
+ * verified against JWKS — `/api/*` rejects it as "invalid access token" even
+ * though it is perfectly valid. Asking for a resource is what makes the issuer
+ * mint a JWT instead.
+ *
+ * The value is the issuer's own identifier, which is already in the
+ * deployment's `validAudiences`. Naming an audience it does not allowlist is
+ * rejected outright as `invalid_request`.
+ */
+export function resourceIndicator(origin: string): string {
+  return `${origin}/api/auth`;
+}
+
 /** One fixed redirect for both platforms, registered with every server. */
 export function redirectUri(): string {
   return AuthSession.makeRedirectUri({ scheme: 'saasmail', path: 'auth' });
@@ -217,6 +233,7 @@ export async function signInToServer(
     responseType: AuthSession.ResponseType.Code,
     usePKCE: true,
     codeChallengeMethod: AuthSession.CodeChallengeMethod.S256,
+    extraParams: { resource: resourceIndicator(probe.origin) },
   });
 
   const result = await request.promptAsync({
@@ -237,7 +254,12 @@ export async function signInToServer(
       clientId,
       code: result.params.code,
       redirectUri: redirectUri(),
-      extraParams: request.codeVerifier ? { code_verifier: request.codeVerifier } : undefined,
+      // `resource` has to be repeated here: RFC 8707 requires it at the token
+      // endpoint too, and omitting it drops back to an opaque token.
+      extraParams: {
+        ...(request.codeVerifier ? { code_verifier: request.codeVerifier } : {}),
+        resource: resourceIndicator(probe.origin),
+      },
     },
     { tokenEndpoint: discovery.tokenEndpoint },
   );
@@ -269,7 +291,13 @@ export async function refreshCredentials(
 ): Promise<ServerCredentials> {
   const discovery = await discover(server.origin);
   const tokens = await AuthSession.refreshAsync(
-    { clientId: server.clientId, refreshToken: current.refreshToken },
+    {
+      clientId: server.clientId,
+      refreshToken: current.refreshToken,
+      // Same reason as the initial exchange: drop this and the refreshed token
+      // comes back opaque, so the app silently stops working after an hour.
+      extraParams: { resource: resourceIndicator(server.origin) },
+    },
     { tokenEndpoint: discovery.tokenEndpoint },
   );
 

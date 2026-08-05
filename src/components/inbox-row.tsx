@@ -1,11 +1,11 @@
-import { Image } from 'expo-image';
-import { Link } from 'expo-router';
-import { Pressable, Text, View } from 'react-native';
+import { Image } from "expo-image";
+import { Link } from "expo-router";
+import { Pressable, Text, View } from "react-native";
 
-import { HAIRLINE, Radius, Spacing, Type } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
-import { formatCount, formatListTime } from '@/lib/format';
-import { rowInitials, rowTitle, type InboxRow } from '@/lib/types';
+import { HAIRLINE, Radius, Spacing, Type } from "@/constants/theme";
+import { useTheme } from "@/hooks/use-theme";
+import { formatCount, formatListTime } from "@/lib/format";
+import { rowInitials, rowTitle, type InboxRow } from "@/lib/types";
 
 /**
  * One row of the inbox.
@@ -34,7 +34,7 @@ export function InboxRowItem({
   const title = rowTitle(row);
 
   const subtitle =
-    row.type === 'person'
+    row.type === "person"
       ? row.recipients.length > 1
         ? `${row.recipients.length} inboxes · ${row.totalCount} messages`
         : (row.recipients[0] ?? `${row.totalCount} messages`)
@@ -42,102 +42,141 @@ export function InboxRowItem({
 
   return (
     <Link href={`/thread/${row.id}?type=${row.type}`} asChild>
+      {/*
+        Layout lives on the inner View, not on the Pressable's style function.
+        `Link asChild` clones this Pressable to inject href and onPress, and a
+        function style does not survive that reliably — the row silently fell
+        back to the default column direction, stacking the avatar above the
+        name. The Pressable keeps only the press feedback.
+      */}
       <Pressable
         onLongPress={onLongPress}
         style={({ pressed }) => ({
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: Spacing.three,
-          paddingVertical: Spacing.three,
-          paddingRight: Spacing.four,
-          // The dot sits in this gutter, so an unread row is scannable from the
-          // left edge without reading any text.
-          paddingLeft: Spacing.two,
           backgroundColor: pressed ? c.backgroundSelected : c.background,
-        })}>
-        <View style={{ width: 10, alignItems: 'center' }}>
-          {unread ? (
-            <View
-              style={{
-                width: 9,
-                height: 9,
-                borderRadius: Radius.full,
-                backgroundColor: c.unread,
-              }}
-            />
-          ) : null}
-        </View>
-
+        })}
+      >
         <View
           style={{
-            width: 40,
-            height: 40,
-            borderRadius: Radius.full,
-            backgroundColor: c.backgroundSubtle,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-          <Text style={{ ...Type.subhead, fontWeight: '600', color: c.textSecondary }}>
-            {rowInitials(row)}
-          </Text>
-        </View>
-
-        <View style={{ flex: 1, gap: 2 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: Spacing.two }}>
-            <Text
-              numberOfLines={1}
-              style={{
-                ...Type.body,
-                flex: 1,
-                fontWeight: unread ? '600' : '400',
-                color: c.text,
-              }}>
-              {title}
-            </Text>
-            <Text
-              style={{
-                ...Type.caption,
-                color: c.textTertiary,
-                fontVariant: ['tabular-nums'],
-              }}>
-              {formatListTime(row.lastEmailAt)}
-            </Text>
-          </View>
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.two }}>
-            <Text numberOfLines={1} style={{ ...Type.footnote, flex: 1, color: c.textSecondary }}>
-              {subtitle}
-            </Text>
-
-            {row.hasAttachment ? (
-              <Image
-                source="sf:paperclip"
-                tintColor={c.textTertiary}
-                style={{ width: 13, height: 13 }}
-              />
-            ) : null}
-
+            flexDirection: "row",
+            alignItems: "center",
+            gap: Spacing.three,
+            paddingVertical: Spacing.three,
+            paddingRight: Spacing.four,
+            // The dot sits in this gutter, so an unread row is scannable from
+            // the left edge without reading any text.
+            paddingLeft: Spacing.two,
+          }}
+        >
+          <View style={{ width: 10, alignItems: "center" }}>
             {unread ? (
               <View
                 style={{
-                  minWidth: 20,
-                  paddingHorizontal: Spacing.one + 1,
-                  paddingVertical: 1,
+                  width: 9,
+                  height: 9,
                   borderRadius: Radius.full,
                   backgroundColor: c.unread,
-                  alignItems: 'center',
-                }}>
-                <Text
-                  style={{
-                    ...Type.caption,
-                    fontWeight: '600',
-                    color: '#FFFFFF',
-                    fontVariant: ['tabular-nums'],
-                  }}>
-                  {formatCount(row.unreadCount)}
-                </Text>
-              </View>
+                }}
+              />
             ) : null}
+          </View>
+
+          <View
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: Radius.full,
+              backgroundColor: c.backgroundSubtle,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text
+              style={{
+                ...Type.subhead,
+                fontWeight: "600",
+                color: c.textSecondary,
+              }}
+            >
+              {rowInitials(row)}
+            </Text>
+          </View>
+
+          <View style={{ flex: 1, gap: 2 }}>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "baseline",
+                gap: Spacing.two,
+              }}
+            >
+              <Text
+                numberOfLines={1}
+                style={{
+                  ...Type.body,
+                  flex: 1,
+                  fontWeight: unread ? "600" : "400",
+                  color: c.text,
+                }}
+              >
+                {title}
+              </Text>
+              <Text
+                style={{
+                  ...Type.caption,
+                  color: c.textTertiary,
+                  fontVariant: ["tabular-nums"],
+                }}
+              >
+                {formatListTime(row.lastEmailAt)}
+              </Text>
+            </View>
+
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: Spacing.two,
+              }}
+            >
+              <Text
+                numberOfLines={1}
+                style={{ ...Type.footnote, flex: 1, color: c.textSecondary }}
+              >
+                {subtitle}
+              </Text>
+
+              {row.hasAttachment ? (
+                <Image
+                  source="sf:paperclip"
+                  tintColor={c.textTertiary}
+                  style={{ width: 13, height: 13 }}
+                />
+              ) : null}
+
+              {unread ? (
+                <View
+                  style={{
+                    minWidth: 20,
+                    paddingHorizontal: Spacing.one + 1,
+                    paddingVertical: 1,
+                    borderRadius: Radius.full,
+                    backgroundColor: c.unread,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      ...Type.caption,
+                      fontWeight: "600",
+                      color: "#FFFFFF",
+                      fontVariant: ["tabular-nums"],
+                    }}
+                  >
+                    {formatCount(row.unreadCount)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
       </Pressable>
