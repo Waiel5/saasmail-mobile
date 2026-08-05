@@ -20,12 +20,7 @@ import { key } from '@/lib/query';
 import type { Me } from '@/lib/types';
 import { useActiveServer } from '@/lib/use-servers';
 
-/**
- * `ConfigResponse` from the worker's webhooks router.
- *
- * The secret's value is never returned by any route — `hasSecret` is the whole
- * of what this app can ever know about it.
- */
+/** `ConfigResponse`. No route ever returns the secret's value, only `hasSecret`. */
 interface WebhookConfig {
   url: string;
   hasSecret: boolean;
@@ -45,37 +40,10 @@ interface TestResult {
 const BODY_PREVIEW_CHARS = 280;
 
 /**
- * The deployment's outbound webhook: where inbound mail is posted as it lands.
- *
- * Read-only about its destination, deliberately. The payload carries the
- * sender, the subject and the opening of the body, so setting a URL turns every
- * future inbound message into a POST to an address the caller chose — mail
- * exfiltration by a client that was never granted `email:read`. The server
- * therefore refuses a non-empty `url` from a bearer token and accepts the
- * clear, which leaves this app holding a kill switch it can never use to arm. A
- * destination field here would be a form whose every non-empty submission
- * answers 403, and a control that reliably fails teaches less than a sentence
- * saying where the setting lives.
- *
- * Rotating the signing secret is absent for a sharper reason: it is
- * unreachable, not merely refused. Three bodies exhaust `PUT /api/webhook`, and
- * none of them rotates anything —
- *
- *   { url: "<current>", secret: "<new>" }  the non-empty url above: 403
- *   { secret: "<new>" }                    `url` is required by the route's
- *                                          schema, so this never reaches the
- *                                          handler: 400
- *   { url: "", secret: "<new>" }           accepted, and the handler branches
- *                                          on the blank url first — it deletes
- *                                          the whole configuration and answers
- *                                          `hasSecret: false`, never reading
- *                                          the secret
- *
- * — because a secret is only ever stored alongside the destination it signs
- * for, and the destination is the half an app may not send. The field guard
- * marks `secret` free, so the permission is real; the route gives it nowhere to
- * land. This screen says where the secret changes rather than offering a
- * rotation that cannot take effect.
+ * No destination field, and no secret rotation. `PUT /api/webhook` refuses a
+ * non-empty `url` from a bearer token, requires `url` in the schema, and
+ * branches on a blank one first — deleting the whole row without ever reading
+ * `secret`. So there is no body an app can send that rotates anything.
  */
 export default function WebhookScreen() {
   const c = useTheme();
@@ -83,10 +51,8 @@ export default function WebhookScreen() {
   const server = useActiveServer();
   const queryClient = useQueryClient();
 
-  // The stored role is a snapshot taken at sign-in and is allowed to be absent,
-  // so the hub asks again rather than reading an admin as a member. The same
-  // applies here: this route is deep-linkable, so it cannot lean on having been
-  // reached through a list that was already gated.
+  // server.role is a sign-in snapshot and may be missing entirely, and this
+  // route is deep-linkable, so it cannot lean on the hub having gated it.
   const me = useQuery({
     queryKey: key(server?.id ?? 'none', 'me'),
     enabled: !!server,
@@ -96,16 +62,12 @@ export default function WebhookScreen() {
 
   const config = useQuery({
     queryKey: key(server?.id ?? 'none', 'webhook'),
-    // Admin-only on the server, so asking before the role is known buys a 403
-    // to render in place of the sentence that explains it.
     enabled: !!server && role === 'admin',
     queryFn: () => apiFetch<WebhookConfig>(server!.id, '/api/webhook'),
   });
 
   const remove = useMutation({
-    // The one write this app can land. A blank `url` is the clear, and the
-    // server takes it from a bearer token precisely because it destroys a
-    // channel rather than opening one.
+    // A blank `url` is the clear, and the only write a bearer token can land.
     mutationFn: () =>
       apiFetch<WebhookConfig>(server!.id, '/api/webhook', {
         method: 'PUT',
@@ -124,9 +86,6 @@ export default function WebhookScreen() {
   const test = useMutation({
     mutationFn: () =>
       apiFetch<TestResult>(server!.id, '/api/webhook/test', { method: 'POST' }),
-    // A 200 means the server tried, not that the endpoint accepted, so the
-    // success haptic follows `ok` rather than the status. Firing it on a
-    // refused delivery would make the failure feel like a pass.
     onSuccess: async (result) => {
       if (result.ok) {
         await succeeded();
@@ -143,8 +102,8 @@ export default function WebhookScreen() {
         'Test not delivered',
         result.status
           ? `Your endpoint answered ${result.status}. Anything outside 200–299 counts as a failed delivery, and real messages are dropped the same way.`
-          : // No status at all means the request never completed: DNS, TLS,
-            // a refused connection, or the server's ten-second timeout.
+          : // No status means the request never completed: DNS, TLS, a refused
+            // connection, or the server's ten-second timeout.
             (result.error ?? 'Your server could not reach that endpoint.'),
       );
     },
@@ -155,9 +114,7 @@ export default function WebhookScreen() {
   });
 
   function confirmRemove(current: WebhookConfig) {
-    // Clearing the URL removes the stored row outright, so the secret goes with
-    // it. Naming only the URL would understate the damage by exactly the part
-    // that cannot be put back from here.
+    // Clearing the URL drops the whole row, so the secret goes with it.
     const alsoSecret = current.hasSecret
       ? ' The signing secret is deleted along with it.'
       : '';
@@ -172,8 +129,7 @@ export default function WebhookScreen() {
     );
   }
 
-  // Reachable by signing out of the last account while this screen is open.
-  // Everything below reads `server.origin` or `server.id`.
+  // Reachable by signing out of the last account with this screen open.
   if (!server) {
     return (
       <View
@@ -198,12 +154,6 @@ export default function WebhookScreen() {
     <>
       <Stack.Screen options={{ title: 'Webhook', headerLargeTitle: true }} />
 
-      {/*
-        The app's bar, unchanged in shape: the contextual action on the left,
-        compose on the right and detached. There is no create action here — this
-        app cannot point a webhook anywhere — so the right slot keeps the
-        standing one.
-      */}
       <Stack.Toolbar placement="bottom">
         {destination ? (
           <Stack.Toolbar.Button
@@ -239,9 +189,8 @@ export default function WebhookScreen() {
           <RefreshControl
             refreshing={me.isRefetching || config.isRefetching}
             onRefresh={() => {
-              // The role decides what this screen shows at all, so a pull that
-              // refreshed only the config would leave someone who has just been
-              // made an admin still reading "Admins only".
+              // Refreshing only the config would leave someone just made an
+              // admin still reading "Admins only".
               me.refetch();
               if (role === 'admin') config.refetch();
             }}
@@ -264,12 +213,7 @@ export default function WebhookScreen() {
                   <Block label="Destination">
                     {destination ? (
                       <>
-                        {/*
-                          Selectable so iOS's own menu offers Copy on a long
-                          press. This app ships no clipboard module, so the
-                          selection menu is the only way to get the URL off the
-                          screen and into whatever configured it.
-                        */}
+                        {/* Selectable for iOS's own Copy: no clipboard module here. */}
                         <Text selectable style={{ ...Type.body, color: c.text }}>
                           {destination}
                         </Text>
@@ -281,10 +225,8 @@ export default function WebhookScreen() {
                         <Pressable
                           onPress={() => confirmRemove(current)}
                           accessibilityRole="button"
-                          // Stops a second confirmed clear landing while the
-                          // first is in flight: it answers 200 against an
-                          // already-empty row, which reads as a fresh success
-                          // for something that was already gone.
+                          // A second clear answers 200 against an already-empty
+                          // row, which reads as a fresh success.
                           disabled={remove.isPending}
                           style={({ pressed }) => ({
                             paddingTop: Spacing.one,
@@ -312,12 +254,7 @@ export default function WebhookScreen() {
                     )}
                   </Block>
 
-                  {/*
-                    Only alongside a destination, because the server stores a
-                    secret only as part of one: with no URL there is no row, and
-                    "not set" would read as a setting waiting to be filled in
-                    rather than a thing that does not exist yet.
-                  */}
+                  {/* The server stores a secret only as part of a destination row. */}
                   {destination ? (
                     <>
                       <Divider />
@@ -335,12 +272,6 @@ export default function WebhookScreen() {
                   ) : null}
                 </Card>
 
-                {/*
-                  Said rather than shown as a disabled field, for the same
-                  reason the inboxes screen says it about forwarding: the
-                  refusal is a policy an operator should understand, and a
-                  greyed-out box explains nothing.
-                */}
                 <Note>
                   A destination is set in your server’s web dashboard, in a
                   browser. Apps may clear one but never set one: a destination is
@@ -357,11 +288,7 @@ export default function WebhookScreen() {
               </Section>
             ) : null}
 
-            {/*
-              Not conditioned on having read the config: when that read is the
-              thing that failed, a browser is exactly where the operator needs
-              to go, so this is the one part of the screen that must survive it.
-            */}
+            {/* Survives a failed config read: a browser is where the fix is. */}
             {config.isLoading ? null : (
               <Section title="Your server">
                 <Card>
@@ -397,12 +324,8 @@ export default function WebhookScreen() {
                     />
                   </Pressable>
                 </Card>
-                {/*
-                  The origin rather than the page holding these settings: this
-                  app talks to self-hosted deployments across several API
-                  versions, and a path that has moved lands on a 404 where the
-                  origin always lands somewhere real.
-                */}
+                {/* The origin, not the settings path: it has moved between API
+                    versions, and this app talks to all of them. */}
                 <Note>
                   {!current
                     ? 'The destination and the signing secret are both set there.'
@@ -422,14 +345,9 @@ export default function WebhookScreen() {
 }
 
 /**
- * Why a request failed, in terms the operator can act on.
- *
- * The code is read before the kind because `parseError` collapses both OAuth
- * refusals into `insufficient-scope`, and they want opposite advice:
- * `OAUTH_INSUFFICIENT_SCOPE` is fixed by consenting again, while
- * `OAUTH_SCOPE_DENIED` is the server declining a body it will always decline —
- * telling someone to reconnect a correctly working app sends them to do it
- * twice and land in the same place.
+ * Code before kind: `parseError` collapses both OAuth refusals into
+ * `insufficient-scope`, but only `OAUTH_INSUFFICIENT_SCOPE` is fixed by
+ * consenting again.
  */
 function failureMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return 'Something went wrong.';
@@ -439,10 +357,6 @@ function failureMessage(error: unknown): string {
   }
   if (error.kind === 'forbidden') return 'Your account is not an admin on this server.';
   if (error.kind === 'network') return 'Cannot reach your server.';
-  // Everything else keeps the server's own sentence — including the 400 the
-  // test route answers when there is no destination, which is reachable here
-  // because the configuration can be cleared in a browser between this screen
-  // reading it and the button being tapped.
   return error.message;
 }
 

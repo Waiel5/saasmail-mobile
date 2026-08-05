@@ -19,13 +19,9 @@ import { useActiveServer } from '@/lib/use-servers';
 
 interface Area {
   href: Href;
-  /** `expo-image` renders SF Symbols from an `sf:` source. */
+  /** `expo-image` renders SF Symbols only from an `sf:`-prefixed source. */
   icon: string;
   label: string;
-  /**
-   * Blocklist and suppressions read alike and sit at opposite ends of the mail
-   * path, so the nouns alone are not enough to pick the right screen.
-   */
   detail: string;
 }
 
@@ -78,21 +74,12 @@ const AREAS: { title: string; items: Area[] }[] = [
   },
 ];
 
-/**
- * The way in to everything that is configured once for the whole deployment.
- *
- * A member never sees the list. Hiding it changes nothing about what is
- * reachable — every route behind it refuses a member on its own — but showing
- * it would send someone through six screens that each answer 403, and a 403
- * explains nothing. One sentence naming the reason is the better failure.
- */
 export default function AdminScreen() {
   const router = useRouter();
   const server = useActiveServer();
 
-  // The stored role is a snapshot taken at sign-in, and the identity fetch is
-  // allowed to fail there, so an admin can be recorded with no role at all.
-  // Asking again is what stops that from reading as "you are not an admin".
+  // server.role is a sign-in snapshot and may be missing entirely, so an admin
+  // would read as "not an admin" without asking again.
   const me = useQuery({
     queryKey: key(server?.id ?? 'none', 'me'),
     enabled: !!server,
@@ -104,8 +91,6 @@ export default function AdminScreen() {
     <>
       <Stack.Screen options={{ title: 'Admin', headerLargeTitle: true }} />
 
-      {/* The same corner as everywhere else in the app, so it keeps meaning
-          what it meant on the screen before this one. */}
       <Stack.Toolbar placement="bottom">
         <Stack.Toolbar.Spacer />
         <Stack.Toolbar.Button

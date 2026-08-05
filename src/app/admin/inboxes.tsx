@@ -32,7 +32,7 @@ interface AdminInbox {
   assignedUserIds: string[];
 }
 
-/** A row of `GET /api/admin/users`, of which this screen reads the name. */
+/** A row of `GET /api/admin/users`. */
 interface AdminUser {
   id: string;
   name: string;
@@ -43,12 +43,8 @@ interface AdminUser {
 }
 
 /**
- * The edits in progress for the one open inbox.
- *
- * Empty strings rather than nulls, because a `TextInput` cannot hold null and
- * because "" is precisely what the server reads as "clear this field" — which
- * makes the emptiness of these two fields the thing the delete condition below
- * turns on.
+ * Empty strings, not nulls: a `TextInput` cannot hold null, and "" is what the
+ * server reads as "clear this field" — which is what `landsOnDefaults` turns on.
  */
 interface Draft {
   displayName: string;
@@ -60,26 +56,6 @@ interface Draft {
 /** `signatureHtml` is capped by the route's schema; over it the save 400s. */
 const MAX_SIGNATURE_LENGTH = 20_000;
 
-/**
- * The inboxes this deployment receives and sends mail as.
- *
- * One inbox opens at a time, in place. A pushed detail screen would be the
- * usual shape, but the back gesture already means "leave inboxes" here, and a
- * second thing for it to mean is how someone ends up losing an unsaved edit by
- * swiping.
- *
- * Two of the four things this screen writes are destructive in a way the
- * request does not look:
- *
- *  - `PATCH` merges over the stored row and, when the merged result is every
- *    field at its default, DELETES the row instead of writing it — answering
- *    200 with those defaults, so destroying a configuration and saving one are
- *    indistinguishable from the response. Clearing the last-named field is
- *    therefore put behind a confirmation that says what it does.
- *  - `PUT .../assignments` replaces the entire set, so a save is authoritative
- *    about people it was never shown. The list is built to send the whole
- *    intended set and says so where the tick boxes are.
- */
 export default function InboxesScreen() {
   const c = useTheme();
   const server = useActiveServer();
@@ -94,9 +70,6 @@ export default function InboxesScreen() {
     queryFn: () => apiFetch<AdminInbox[]>(server!.id, '/api/admin/inboxes'),
   });
 
-  // Assignments are stored as user ids, which are meaningless on screen. A
-  // failure here costs the tick boxes and nothing else, so it is reported in
-  // place rather than taken as a failure of the screen.
   const users = useQuery({
     queryKey: key(server?.id ?? 'none', 'admin', 'users'),
     enabled: !!server,
@@ -111,8 +84,8 @@ export default function InboxesScreen() {
 
   const save = useMutation({
     mutationFn: async ({ inbox, draft }: { inbox: AdminInbox; draft: Draft }) => {
-      // Sequential, not concurrent: if the identity write is refused there is
-      // no reason to have already replaced the inbox's members.
+      // Sequential, not concurrent: a refused identity write must not leave the
+      // inbox's members already replaced.
       if (identityChanged(inbox, draft)) {
         await apiFetch(
           server!.id,
@@ -120,6 +93,7 @@ export default function InboxesScreen() {
           { method: 'PATCH', body: identityBody(draft) },
         );
       }
+      // PUT replaces the whole set, so this must send every intended id.
       if (!sameIds(draft.userIds, inbox.assignedUserIds)) {
         await apiFetch(
           server!.id,
@@ -140,10 +114,8 @@ export default function InboxesScreen() {
   });
 
   const stopForwarding = useMutation({
-    // Clearing is the only change to `forwardTo` an app may make: a destination
-    // installs a standing copy of every future message, so the server takes the
-    // clear from a bearer token and refuses the set. The app therefore holds a
-    // kill switch it cannot use to arm anything.
+    // Clearing is the only change to `forwardTo` a bearer token may make; the
+    // server refuses a non-empty one.
     mutationFn: (inbox: AdminInbox) =>
       apiFetch(server!.id, `/api/admin/inboxes/${encodeURIComponent(inbox.email)}`, {
         method: 'PATCH',
@@ -162,8 +134,6 @@ export default function InboxesScreen() {
       }),
     onSuccess: (created) => {
       invalidate();
-      // Straight into the editor: a new inbox has no name, no signature and
-      // nobody assigned, so the row it just became says nothing about itself.
       setOpenEmail(created.email);
       setDraft(draftFrom(created));
     },
@@ -178,8 +148,8 @@ export default function InboxesScreen() {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Create',
-          // Annotated because `AlertButton.onPress` is a union of the plain and
-          // login-password prompt callbacks, which infers as `any` here.
+          // Annotated because `AlertButton.onPress` unions the plain and
+          // login-password callbacks, and infers as `any` here.
           onPress: (value?: string) => {
             const email = (value ?? '').trim().toLowerCase();
             if (!isEmail(email)) {
@@ -207,9 +177,8 @@ export default function InboxesScreen() {
   }
 
   function confirmStopForwarding(inbox: AdminInbox) {
-    // Predicted from the stored row rather than the draft, because that is what
-    // this request merges over — anything typed above and not yet saved has no
-    // part in it.
+    // Predicted from the stored row, not the draft: that is what this request
+    // merges over.
     const message = landsOnDefaults({ ...inbox, forwardTo: null })
       ? `Mail arriving for ${inbox.email} will stop being copied to ${inbox.forwardTo}. Nothing else is saved for this inbox, so its configuration is removed rather than updated, and the address stays in this list only if mail has already arrived for it.`
       : `Mail arriving for ${inbox.email} will stop being copied to ${inbox.forwardTo}. Only a browser can set a forwarding address again.`;
@@ -292,11 +261,6 @@ export default function InboxesScreen() {
     <>
       <Stack.Screen options={{ title: 'Inboxes', headerLargeTitle: true }} />
 
-      {/*
-        The app's bar, unchanged in shape: the contextual action on the left —
-        here the save for whichever inbox is open — and the thing that creates
-        something on the right, detached.
-      */}
       <Stack.Toolbar placement="bottom">
         {open && draft ? (
           <Stack.Toolbar.Button
@@ -401,10 +365,8 @@ function identityBody(draft: Draft) {
 }
 
 /**
- * `identityBody` as the server will store it: "" becomes null, and null is the
- * distinction the delete condition turns on. The signature is sanitized on the
- * way in as well, but that only ever rewrites one string into another — it
- * cannot produce the null that would take the row with it.
+ * `identityBody` as the server stores it: "" becomes null, and null is what
+ * `landsOnDefaults` turns on.
  */
 function mergedIdentity(draft: Draft) {
   const body = identityBody(draft);
@@ -416,17 +378,12 @@ function mergedIdentity(draft: Draft) {
 }
 
 /**
- * The server's delete condition, restated.
- *
- * `PATCH /api/admin/inboxes/{email}` merges the body over the stored row and,
- * when the result is name null, mode "chat", signature null and forwardTo null,
- * deletes the `sender_identities` row rather than writing it — then answers 200
- * with those same defaults. Nothing in the response distinguishes that from an
- * ordinary save, so the only place the difference can be shown is before the
- * request leaves.
- *
- * Deliberately compares against null rather than trimming: the server compares
- * against null too, and a stored " " is a value it keeps.
+ * The server's delete condition, restated. `PATCH /api/admin/inboxes/{email}`
+ * merges over the stored row and, when the result is every field at its
+ * default, deletes the `sender_identities` row and answers 200 with those same
+ * defaults — indistinguishable from an ordinary save, so the warning can only
+ * be raised before the request leaves. Compares against null rather than
+ * trimming, as the server does: a stored " " is a value it keeps.
  */
 function landsOnDefaults(next: {
   displayName: string | null;
@@ -442,7 +399,6 @@ function landsOnDefaults(next: {
   );
 }
 
-/** True when saving would change what is stored. */
 function identityChanged(inbox: AdminInbox, draft: Draft): boolean {
   const body = identityBody(draft);
   return (
@@ -490,8 +446,6 @@ function InboxSummary({
         padding: Spacing.three,
         backgroundColor: pressed ? c.backgroundSelected : 'transparent',
       })}>
-      {/* The address leads: it is the inbox's identity, and the display name is
-          a setting on it — one an unconfigured inbox does not have at all. */}
       <View style={{ flex: 1, gap: 2 }}>
         <Text numberOfLines={1} style={{ ...Type.body, color: c.text }}>
           {inbox.email}
@@ -562,9 +516,8 @@ function Editor({
     });
   }
 
-  // Ids this list has no row for stay in the draft rather than being filtered
-  // out of it. The save replaces the whole set, so dropping an id it cannot
-  // draw would revoke an assignment the operator was never shown.
+  // Ids with no row here stay in the draft: the save replaces the whole set, so
+  // dropping one would revoke an assignment nobody was shown.
   const hidden = users
     ? draft.userIds.filter((id) => !users.some((user) => user.id === id)).length
     : 0;
@@ -640,12 +593,6 @@ function Editor({
         ) : (
           <Text style={{ ...Type.body, color: c.textSecondary }}>Not forwarding</Text>
         )}
-        {/*
-          Read-only on purpose, and said rather than shown as a disabled field:
-          a forwarding address is a standing relay of all future inbound mail,
-          so the server accepts it only from a browser session and refuses it
-          from any app. Clearing one is always allowed.
-        */}
         <Text style={{ ...Type.caption, color: c.textTertiary }}>
           A forwarding address is set in the web admin in a browser. Apps may
           clear one but never set one.
@@ -748,13 +695,7 @@ function Note({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * One row: a fixed-width label, then the control.
- *
- * The label column is a fixed width rather than intrinsic so the values line up
- * down one edge; with intrinsic widths each row starts its value at a different
- * x and the rows read as unrelated things.
- */
+/** The label width is fixed, not intrinsic, so values line up down one edge. */
 function Field({
   label,
   onPress,
@@ -796,7 +737,6 @@ function Field({
   );
 }
 
-/** A stacked row, for the controls an 84pt label column cannot sit beside. */
 function Block({
   label,
   children,

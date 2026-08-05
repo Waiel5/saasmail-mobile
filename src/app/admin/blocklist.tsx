@@ -29,17 +29,12 @@ import { key } from '@/lib/query';
 import type { Me } from '@/lib/types';
 import { useActiveServer } from '@/lib/use-servers';
 
-/**
- * `BlockRuleSchema` from the worker's blocklist router.
- *
- * `value` is stored trimmed and lowercased, so it is not necessarily what was
- * typed — every string this screen shows comes back from the server rather than
- * from the form, so what is displayed is what is stored.
- */
+/** `BlockRuleSchema` from the worker's blocklist router. */
 interface BlockRule {
   id: string;
   /** "email" blocks one sender; "domain" blocks every address at a domain. */
   type: 'email' | 'domain';
+  /** Stored trimmed and lowercased, so not necessarily what was typed. */
   value: string;
   note: string | null;
   /** The address of whoever added it. Null for rules written by a script. */
@@ -61,31 +56,8 @@ interface PurgeResult {
   peopleDeleted: number;
 }
 
-/** The word the purge asks to be typed out before it will run. */
 const PURGE_PHRASE = 'DELETE';
 
-/**
- * The deployment's blocklist.
- *
- * Not a per-inbox preference. One list belongs to the server, every inbox on it
- * is filtered by the same rules, and every admin edits the same rows — which is
- * why each rule is shown with the address of whoever added it. A rule stops
- * delivery outright rather than filing mail elsewhere: `email-handler` checks it
- * before any storage, so a blocked sender's mail is never written, never
- * forwarded and never notified about. Mail that arrived *before* the rule is
- * only hidden from the lists and from search, and comes back in full if the
- * rule is removed.
- *
- * That hidden mail is what the section at the bottom deletes, and it is the most
- * destructive request this app can make: `DELETE /api/blocklist/mail` walks
- * every sender the rules match and permanently removes their stored messages
- * across every inbox on the deployment — with the attachment objects in R2, the
- * replies this server sent them, and their contact rows. There is no dry run,
- * the response is a pair of counts after the fact, and nothing about it is
- * reversible. So it is kept away from the rules it depends on, it says what it
- * destroys in the words above rather than in a colour, and the confirmation has
- * to be typed.
- */
 export default function BlocklistScreen() {
   const c = useTheme();
   const server = useActiveServer();
@@ -94,17 +66,14 @@ export default function BlocklistScreen() {
   const [type, setType] = useState<'email' | 'domain'>('email');
   const [value, setValue] = useState('');
   const [note, setNote] = useState('');
-  /**
-   * What the last add actually did. Held because the POST is idempotent and its
-   * two outcomes are not the same news — see `foundRatherThanMade`.
-   */
+  // The POST is idempotent and its two outcomes are not the same news; see
+  // `foundRatherThanMade`.
   const [outcome, setOutcome] = useState<{ rule: BlockRule; existed: boolean } | null>(
     null,
   );
 
-  // The stored role is a snapshot taken at sign-in, and the identity fetch is
-  // allowed to fail there, so an admin can be recorded with no role at all.
-  // Asking again is what stops that from reading as "you are not an admin".
+  // server.role is a sign-in snapshot and may be missing entirely, so an admin
+  // would read as "not an admin" without asking again.
   const me = useQuery({
     queryKey: key(server?.id ?? 'none', 'me'),
     enabled: !!server,
@@ -115,8 +84,6 @@ export default function BlocklistScreen() {
 
   const rules = useInfiniteQuery({
     queryKey: key(server?.id ?? 'none', 'blocklist'),
-    // Held back until the role is known, so a member gets the sentence below
-    // rather than a 403 dressed up as a broken screen.
     enabled: !!server && isAdmin,
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) =>
@@ -137,14 +104,10 @@ export default function BlocklistScreen() {
   }
 
   /**
-   * Drop every cached query for this server, not just the blocklist.
-   *
-   * The people list and search both filter against these rules, so adding one,
-   * removing one, or deleting the mail they hide changes what is in the
-   * mailbox, not merely what is on this screen. Cached pages stay fresh for 30
-   * seconds and this app does not refetch on focus, so without this a sender
-   * stays on screen after being blocked — which is the one thing blocking is
-   * for.
+   * The whole server, not just the blocklist: mail lists and search filter
+   * against these rules, and cached pages stay fresh for 30 seconds with no
+   * refetch on focus, so a narrower invalidation leaves a blocked sender on
+   * screen.
    */
   function invalidateEverything() {
     queryClient.invalidateQueries({ queryKey: key(server!.id) });
@@ -152,16 +115,15 @@ export default function BlocklistScreen() {
 
   const add = useMutation({
     mutationFn: async () => {
-      // Captured before the request goes out: afterwards the rule is on the
-      // list either way, and the comparison is worthless.
+      // Captured before the request: afterwards the rule is on the list either
+      // way and the comparison is worthless.
       const before = loaded;
       const rule = await apiFetch<BlockRule>(server!.id, '/api/blocklist', {
         method: 'POST',
         body: {
           type,
           value: value.trim(),
-          // Omitted rather than sent empty, so a blank field leaves `note` null
-          // instead of storing "" for the next reader to interpret.
+          // Omitted, not sent empty: "" would be stored as the note.
           note: note.trim() || undefined,
         },
       });
@@ -185,10 +147,6 @@ export default function BlocklistScreen() {
       if (process.env.EXPO_OS === 'ios') {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
-      // The server's own refusals are the useful ones here: it rejects a rule
-      // that would block this deployment's own address or sending domain, and
-      // "you can't block one of your own addresses" is not a sentence this
-      // screen could have written.
       Alert.alert('Could not block', failureMessage(error));
     },
   });
@@ -205,7 +163,6 @@ export default function BlocklistScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
       if (outcome?.rule.id === rule.id) setOutcome(null);
-      // Their hidden mail becomes visible again this instant.
       invalidateEverything();
     },
     onError: (error, rule) =>
@@ -219,16 +176,12 @@ export default function BlocklistScreen() {
       if (process.env.EXPO_OS === 'ios') {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-      // Everything cached for this server is suspect now: whole conversations,
-      // people rows and attachment counts have gone from under it.
       invalidateEverything();
       Alert.alert('Mail deleted', purgeSummary(result));
     },
     onError: (error) =>
-      // Deliberately not "nothing was deleted". The purge is a loop over
-      // senders with no transaction around it, so a failure part-way — or a
-      // connection dropped after the request arrived — leaves some mail already
-      // gone. Claiming otherwise would be the one comforting lie available.
+      // Never "nothing was deleted": the purge is an untransacted loop over
+      // senders, so a failure part-way leaves some mail already gone.
       Alert.alert(
         'Could not finish deleting',
         `${failureMessage(error)}\n\nSome mail may already have been deleted. Pull to refresh, then check the list before trying again.`,
@@ -282,14 +235,6 @@ export default function BlocklistScreen() {
     );
   }
 
-  /**
-   * Two questions, and the second one has to be typed.
-   *
-   * A single red button is the right weight for undoing a row; this deletes
-   * other people's mail out of inboxes the operator may never have opened, and
-   * the API offers neither a preview nor a way back. Typing the word is the
-   * cheapest control that cannot be performed by a thumb in a pocket.
-   */
   function confirmPurge() {
     const scope =
       rules.hasNextPage || !rules.isSuccess
@@ -317,8 +262,8 @@ export default function BlocklistScreen() {
         {
           text: 'Delete mail',
           style: 'destructive',
-          // Annotated because `AlertButton.onPress` is a union of the plain and
-          // login-password prompt callbacks, which infers as `any` here.
+          // Annotated because `AlertButton.onPress` unions the plain and
+          // login-password callbacks, and infers as `any` here.
           onPress: (typed?: string) => {
             if ((typed ?? '').trim().toUpperCase() !== PURGE_PHRASE) {
               Alert.alert(
@@ -353,12 +298,10 @@ export default function BlocklistScreen() {
 
   const domains = loaded.filter((rule) => rule.type === 'domain');
   const addresses = loaded.filter((rule) => rule.type === 'email');
-  // Provably empty rather than merely not loaded yet: with no rules the purge
-  // matches no senders, so it would delete nothing and only offer the chance to
-  // be wrong about that.
+  // `isSuccess` is load-bearing: provably empty, not merely not loaded yet.
   const nothingBlocked = rules.isSuccess && loaded.length === 0;
 
-  // Reachable by signing out of the last account while this screen is open.
+  // Reachable by signing out of the last account with this screen open.
   if (!server) {
     return (
       <View
@@ -379,16 +322,8 @@ export default function BlocklistScreen() {
     <>
       <Stack.Screen options={{ title: 'Blocklist', headerLargeTitle: true }} />
 
-      {/*
-        The app's bar, unchanged in shape: the thing that creates something on
-        the right, detached. Nothing on the left — the destructive action on this
-        screen is deliberately not one thumb-width from the add button.
-      */}
       <Stack.Toolbar placement="bottom">
         <Stack.Toolbar.Spacer />
-        {/* Absent rather than disabled for a member: there is no form above it
-            to be blocked from submitting, so a greyed button would be a control
-            for something that is not on the screen. */}
         {isAdmin ? (
           <Stack.Toolbar.Button
             icon="hand.raised"
@@ -557,12 +492,6 @@ export default function BlocklistScreen() {
               </View>
             ) : null}
 
-            {/*
-              Below everything, under its own heading, and phrased as what it
-              destroys rather than as an operation. It is the only control in the
-              app that reaches mail belonging to inboxes the operator may never
-              have opened.
-            */}
             <Section title="Hidden mail">
               <Card>
                 <View style={{ padding: Spacing.three, gap: Spacing.two }}>
@@ -635,17 +564,9 @@ export default function BlocklistScreen() {
 }
 
 /**
- * Whether the POST found the rule or created it.
- *
- * The server distinguishes the two in the status line — 201 for a new rule, 200
- * for one that was already there — and sends the identical body either way.
- * `apiFetch` returns the body only, so the answer is reconstructed from two
- * facts that are in it: a rule already on this screen cannot have been created
- * by the request that returned it, and a rule stamped with somebody else's
- * address was not created by this call. Anything else reads as newly added,
- * which is wrong only for a rule this same account added somewhere this screen
- * has not read — another device, or a row the cursor skipped — and that row then
- * shows its real, older date in the list below.
+ * The POST answers 201 for a new rule and 200 for an existing one, with an
+ * identical body; `apiFetch` returns the body only, so the status never reaches
+ * here and the answer is reconstructed from the row itself.
  */
 function foundRatherThanMade(
   rule: BlockRule,
@@ -660,14 +581,13 @@ function foundRatherThanMade(
   );
 }
 
-/** What a rule reaches, in the subject position of a sentence. */
+/** Reads as the subject of a sentence; callers append the verb. */
 function describeReach(rule: BlockRule): string {
   return rule.type === 'domain'
     ? `Mail from every address at ${rule.value}`
     : `Mail from ${rule.value}`;
 }
 
-/** Who added a rule and when, for a sentence that already named the rule. */
 function byline(rule: BlockRule): string {
   const when = formatListTime(rule.createdAt);
   return rule.createdBy ? `by ${rule.createdBy} · ${when}` : when;
@@ -681,9 +601,8 @@ function purgeSummary(result: PurgeResult): string {
     result.emailsDeleted === 1 ? '1 message' : `${result.emailsDeleted} messages`;
   const senders =
     result.peopleDeleted === 1 ? '1 sender' : `${result.peopleDeleted} senders`;
-  // The count the API returns is of received messages; the replies this server
-  // sent to those addresses are deleted in the same pass and never counted, so
-  // reporting the number alone would understate what just happened.
+  // `emailsDeleted` counts received messages only; the replies this server sent
+  // are deleted in the same pass and never counted.
   return `${messages} from ${senders} are gone, with their attachments. Replies this server sent to those addresses were deleted too, and are not in that count.`;
 }
 
@@ -702,8 +621,7 @@ function RuleRow({ rule, onPress }: { rule: BlockRule; onPress: () => void }) {
   return (
     <Pressable
       onPress={onPress}
-      // Both gestures open the same sheet. Nothing sits behind this row, so a
-      // tap that did nothing would be the only thing most people ever discover.
+      // Same sheet on both gestures: nothing else sits behind this row.
       onLongPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${rule.value}, blocked`}
@@ -724,8 +642,6 @@ function RuleRow({ rule, onPress }: { rule: BlockRule; onPress: () => void }) {
             {rule.note}
           </Text>
         ) : null}
-        {/* Who blocked this is part of the rule, not decoration: the list is
-            shared, and "why is this here" is usually a question about a person. */}
         <Text numberOfLines={1} style={{ ...Type.caption, color: c.textTertiary }}>
           {byline(rule)}
         </Text>
@@ -815,13 +731,7 @@ function Note({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * One form row: a fixed-width label, then the control.
- *
- * The label column is a fixed width rather than intrinsic so the values line up
- * down one edge; with intrinsic widths each row starts its value at a different
- * x and the rows read as unrelated things.
- */
+/** The label width is fixed, not intrinsic, so values line up down one edge. */
 function Field({
   label,
   onPress,

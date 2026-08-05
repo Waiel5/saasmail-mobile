@@ -1,19 +1,8 @@
 /**
- * Talking to a saasmail deployment.
- *
- * Deliberately not a port of the web app's `apiFetch`. That one throws away
- * error bodies (`throw new Error("API error: " + res.status)`), which is
- * survivable in a browser where the user can open devtools and is not here:
- * this API answers with at least four distinct shapes, and two of them are
- * actionable rather than fatal.
- *
- *   { error }                        — ordinary failure
- *   { error, code: "PASSKEY_REQUIRED" }        — fixable, but not by retrying
- *   { error, code: "OAUTH_INSUFFICIENT_SCOPE" } — fixable by re-consenting
- *   "Inbox not allowed"              — bare text, no JSON at all
- *
- * Collapsing those into one Error is how a client ends up in a refresh loop
- * against a failure no new token can fix.
+ * Errors arrive as `{ error }`, sometimes with a `code` of PASSKEY_REQUIRED or
+ * OAUTH_INSUFFICIENT_SCOPE, and sometimes as bare text with no JSON at all.
+ * Collapsing them into one Error puts the client in a refresh loop against a
+ * failure no new token can fix.
  */
 import {
   getServer,
@@ -38,7 +27,6 @@ export class ApiError extends Error {
     message: string,
     readonly kind: ApiErrorKind,
     readonly status: number,
-    /** Server-supplied code, when there was one. */
     readonly code?: string,
   ) {
     super(message);
@@ -50,14 +38,9 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * One refresh at a time per server.
- *
- * Several requests routinely 401 together — a screen mounting fires three
- * queries at once. Without this each would refresh independently, and because
- * better-auth rotates the refresh token, the second exchange invalidates the
- * first one's result and the user is signed out by their own client.
- */
+// One refresh at a time per server. Requests 401 in batches, and because
+// better-auth rotates the refresh token, a second concurrent exchange
+// invalidates the first one's result and signs the user out.
 const inFlightRefresh = new Map<string, Promise<ServerCredentials | null>>();
 
 async function refreshOnce(server: ServerRecord): Promise<ServerCredentials | null> {
@@ -68,9 +51,8 @@ async function refreshOnce(server: ServerRecord): Promise<ServerCredentials | nu
     const current = await readCredentials(server.id);
     if (!current?.refreshToken) return null;
 
-    // Captured before the network call. If it has moved by the time we return,
-    // the user signed out or re-authenticated meanwhile and this result would
-    // resurrect credentials they had already discarded.
+    // Captured before the network call: if it moved, the user signed out or
+    // re-authenticated meanwhile and this result must not be written.
     const generation = current.generation;
 
     try {
@@ -96,8 +78,8 @@ async function parseError(res: Response): Promise<ApiError> {
   try {
     body = JSON.parse(text);
   } catch {
-    // Not JSON — `assertInboxAllowed` throws an HTTPException whose body is the
-    // bare string "Inbox not allowed", because no onError handler wraps it.
+    // Not JSON: `assertInboxAllowed` throws an HTTPException whose body is the
+    // bare string "Inbox not allowed", with no onError handler wrapping it.
     body = null;
   }
 
@@ -135,11 +117,9 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 }
 
 /**
- * Perform an authenticated request against a specific server.
- *
- * Every call names its server. There is no ambient "current server" here on
- * purpose: a background refetch that resolved against whichever server happened
- * to be active would show one account's mail under another's name.
+ * Every call names its server; there is no ambient "current server". A refetch
+ * resolving against whichever server is active when it lands would show one
+ * account's mail under another's name.
  */
 export async function apiFetch<T>(
   serverId: string,
@@ -186,7 +166,6 @@ export async function apiFetch<T>(
   return JSON.parse(text) as T;
 }
 
-/** An authenticated URL plus headers, for `expo-image` and attachment fetches. */
 export async function authorizedSource(
   serverId: string,
   path: string,

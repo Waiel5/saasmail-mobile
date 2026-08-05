@@ -1,18 +1,8 @@
 /**
- * Signing in to an arbitrary saasmail deployment.
- *
- * The app is not shipped with any server's client id, because there is no
- * server to ship — the user names one at runtime. RFC 7591 dynamic client
- * registration makes that work: the app registers itself on first contact and
- * keeps the id it is given. saasmail leaves registration open so MCP clients
- * can self-register, and that same door is what lets this app onboard a
- * deployment it has never seen with no configuration on either side.
- *
- * Authorization happens in the system browser, not a WebView, which is both the
- * RFC 8252 requirement and the reason passkeys work at all: the WebAuthn
- * ceremony runs on the deployment's own origin, where its RP ID already
- * matches. An embedded WebView would break that and hand the app the user's
- * password, which is exactly what it should never see.
+ * No client id is shipped: the user names a deployment at runtime and the app
+ * self-registers with it (RFC 7591). Authorization must run in the system
+ * browser, never a WebView: the WebAuthn ceremony needs the deployment's own
+ * origin for its RP ID to match, and passkeys break otherwise.
  */
 import * as AuthSession from 'expo-auth-session';
 
@@ -23,7 +13,6 @@ import {
   type ServerRecord,
 } from './servers';
 
-/** Scopes requested for every server. */
 const SCOPES = ['openid', 'email', 'offline_access', 'email:read', 'email:send', 'email:manage'];
 
 /** Requested only when the user asks for admin access on that server. */
@@ -46,13 +35,8 @@ export class ServerError extends Error {
 }
 
 /**
- * Ask a candidate server what it is and what it supports, before asking the
- * user to authorize anything.
- *
- * Doing this first is the difference between "this server is running a version
- * of saasmail without native support" and a user who completes a browser
- * login, grants consent, and only then watches every request fail. The
- * capability flags exist for exactly this handshake.
+ * Run before any authorize call: a too-old server has to fail here, not after
+ * the user has completed a browser login and granted consent.
  */
 export async function probeServer(input: string): Promise<ServerProbe> {
   const origin = canonicalizeOrigin(input);
@@ -89,9 +73,8 @@ export async function probeServer(input: string): Promise<ServerProbe> {
     );
   }
 
-  // Absent flags mean a build from before the handshake existed, which is
-  // also a build that rejects bearer tokens on /api/*. Treat missing as false
-  // rather than as permission to try.
+  // Absent flags mean a build from before the handshake, which also rejects
+  // bearer tokens on /api/*. Missing is false, not permission to try.
   const capabilities: ServerCapabilities = {
     oauthApi: config.capabilities?.oauthApi === true,
     oauthStream: config.capabilities?.oauthStream === true,
@@ -137,16 +120,10 @@ async function discover(origin: string): Promise<Discovery> {
 }
 
 /**
- * RFC 8707 resource indicator, sent on authorize, token and refresh.
- *
- * Without it better-auth issues an *opaque* access token, which cannot be
- * verified against JWKS — `/api/*` rejects it as "invalid access token" even
- * though it is perfectly valid. Asking for a resource is what makes the issuer
- * mint a JWT instead.
- *
- * The value is the issuer's own identifier, which is already in the
- * deployment's `validAudiences`. Naming an audience it does not allowlist is
- * rejected outright as `invalid_request`.
+ * RFC 8707 resource indicator, required on authorize, token and refresh alike.
+ * Omit it and better-auth issues an opaque token that `/api/*` rejects as
+ * invalid. The value must be an audience the deployment already allowlists;
+ * anything else comes back as `invalid_request`.
  */
 export function resourceIndicator(origin: string): string {
   return `${origin}/api/auth`;
@@ -158,12 +135,8 @@ export function redirectUri(): string {
 }
 
 /**
- * Register this installation as a client of `origin` (RFC 7591).
- *
  * `token_endpoint_auth_method: "none"` because a shipped app cannot keep a
- * secret — anyone can extract one from the binary — which is precisely why
- * PKCE exists and why the flow below is useless to an attacker without the
- * verifier.
+ * secret; PKCE is what makes the flow safe instead.
  */
 async function registerClient(
   origin: string,
@@ -213,11 +186,8 @@ export interface SignInResult {
 }
 
 /**
- * Register, authorize in the system browser, and exchange the code.
- *
- * Returns without persisting anything: the caller writes the record and the
- * credentials together once it has also fetched the user's identity, so a
- * half-added server never appears in the list.
+ * Persists nothing. The caller writes the record and credentials together once
+ * it has the user's identity too, so a half-added server never appears.
  */
 export async function signInToServer(
   probe: ServerProbe,
@@ -254,8 +224,8 @@ export async function signInToServer(
       clientId,
       code: result.params.code,
       redirectUri: redirectUri(),
-      // `resource` has to be repeated here: RFC 8707 requires it at the token
-      // endpoint too, and omitting it drops back to an opaque token.
+      // `resource` has to be repeated at the token endpoint too; omitting it
+      // drops back to an opaque token.
       extraParams: {
         ...(request.codeVerifier ? { code_verifier: request.codeVerifier } : {}),
         resource: resourceIndicator(probe.origin),
@@ -294,8 +264,8 @@ export async function refreshCredentials(
     {
       clientId: server.clientId,
       refreshToken: current.refreshToken,
-      // Same reason as the initial exchange: drop this and the refreshed token
-      // comes back opaque, so the app silently stops working after an hour.
+      // Drop this and the refreshed token comes back opaque, so the app
+      // silently stops working after an hour.
       extraParams: { resource: resourceIndicator(server.origin) },
     },
     { tokenEndpoint: discovery.tokenEndpoint },
@@ -303,8 +273,8 @@ export async function refreshCredentials(
 
   return {
     accessToken: tokens.accessToken,
-    // better-auth rotates the refresh token, so keeping the old one would spend
-    // a token the server has already retired.
+    // better-auth rotates the refresh token; keeping the old one spends a token
+    // the server has already retired.
     refreshToken: tokens.refreshToken ?? current.refreshToken,
     expiresAt: tokens.issuedAt + (tokens.expiresIn ?? 3600) - 60,
     generation: current.generation + 1,

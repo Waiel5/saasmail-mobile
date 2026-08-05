@@ -25,12 +25,8 @@ import {
   type InboxRow,
 } from "@/lib/types";
 
-/**
- * Where a row's text begins: the dot gutter, the avatar, and the gaps around
- * them. The separator and the pinned Drafts row both line up against it, so it
- * is one expression rather than three that drift apart the first time the
- * avatar changes size.
- */
+// Where a row's text begins. `RowSeparator` and `DraftsRow` align to it, so it
+// has to track any change to the dot gutter or avatar size.
 const TEXT_INSET = Spacing.two + 10 + Spacing.three + 40 + Spacing.three;
 
 interface MarkReadResult {
@@ -41,33 +37,11 @@ interface MarkReadResult {
 /**
  * One row of the inbox.
  *
- * Modelled on Apple Mail rather than Gmail, for a reason that is about data
- * rather than taste: Gmail's row is built around stars, labels and
- * swipe-to-archive, none of which this API can store. Mail's row expresses
- * exactly one piece of state — read or unread — which is exactly what saasmail
- * has. Borrowing the busier design would mean drawing affordances that cannot
- * be honoured.
- *
- * The unread dot is the only place violet appears in the list. That is what
- * makes it readable at a glance in a column of otherwise uniform rows.
- *
- * The same rule picks the swipe actions, and it bites harder here because a
- * row is a person or a group conversation, not a message. An action belongs
- * only if the API can express it at that granularity. Two can:
- *
- *  - Read. `POST /api/people/mark-read` and `POST /api/conversations/mark-read`
- *    each take aggregate ids and flip every unread message inside one. Offered
- *    only while the row has unread mail, because there is no aggregate
- *    mark-*unread* endpoint and the reverse therefore cannot be drawn.
- *  - Delete. `DELETE /api/people/{id}`, which is emphatically not "delete this
- *    conversation": it erases the person along with every message to and from
- *    them. So it is labelled and confirmed as that, and it is restricted to
- *    person rows (group conversations have no delete endpoint at all) and to
- *    admins (the route answers 403 to everyone else).
- *
- * Not used: `PATCH /api/emails/bulk`. It is registered after `PATCH
- * /api/emails/{id}`, so Hono matches "bulk" as an id and the bulk route is
- * unreachable — the server's own suite skips its tests saying exactly that.
+ * `DELETE /api/people/{id}` is not "delete this conversation": it erases the
+ * person and every message to and from them, and it 403s for non-admins. Group
+ * conversations have no delete endpoint at all.
+ * `PATCH /api/emails/bulk` is unreachable: it is registered after
+ * `PATCH /api/emails/{id}`, so Hono matches "bulk" as an id.
  */
 export function InboxRowItem({
   row,
@@ -77,7 +51,6 @@ export function InboxRowItem({
 }: {
   row: InboxRow;
   serverId: string;
-  /** Whether this account may delete: `DELETE /api/people/{id}` is admin-only. */
   isAdmin?: boolean;
   onLongPress?: () => void;
 }) {
@@ -95,9 +68,8 @@ export function InboxRowItem({
         : (row.recipients[0] ?? `${row.totalCount} messages`)
       : row.inbox;
 
-  // Wider than the list that was just edited: marking an aggregate read also
-  // flips `isRead` on every message inside the thread this row opens, and
-  // deleting a person empties that thread entirely.
+  // Wider than the list that was just edited: both mutations also change the
+  // thread this row opens.
   const settle = () => {
     queryClient.invalidateQueries({ queryKey: key(serverId) });
   };
@@ -127,8 +99,8 @@ export function InboxRowItem({
       await queryClient.cancelQueries({
         queryKey: key(serverId, "people", "grouped"),
       });
-      // A person id and a conversation id come from different namespaces, so an
-      // id on its own does not identify a row.
+      // Person ids and conversation ids are separate namespaces, so an id alone
+      // does not identify a row.
       return patchLists(queryClient, serverId, (candidate) =>
         candidate.type === row.type && candidate.id === row.id
           ? { ...candidate, unreadCount: 0 }
@@ -195,33 +167,14 @@ export function InboxRowItem({
     );
   };
 
-  /*
-    A real UIKit menu on long-press, alongside the swipe.
-
-    This matters because the swipe below is the one drawn control in the app.
-    `.swipeActions` is a SwiftUI modifier that only applies to rows of a
-    SwiftUI `List`, and this list is a `FlatList` — which it has to be, for
-    `RefreshControl` and for the `Stack.SearchBar` integration. So the swipe
-    panel is necessarily ours. The menu is not: `Link.Menu` renders a genuine
-    `UIContextMenu`, with the system's blur, haptics, spring and accessibility.
-
-    Both, rather than either, because they fail differently. The swipe is
-    faster once you know it is there and is invisible until you try it; the
-    menu is discoverable and names every action in words. Mail ships both for
-    the same reason.
-  */
   const content = (
     <Link href={`/thread/${row.id}?type=${row.type}`} asChild>
       <Link.Trigger>
       {/*
-        Layout lives on the inner View, not on the Pressable's style function.
-        `Link asChild` clones this Pressable to inject href and onPress, and a
-        function style does not survive that reliably — the row silently fell
-        back to the default column direction, stacking the avatar above the
-        name. The Pressable keeps only the press feedback.
-
-        Its background has to stay opaque whichever branch runs: it is what the
-        swipe actions are revealed from behind.
+        Layout stays on the inner View. `Link asChild` clones this Pressable to
+        inject href and onPress, and a function style does not survive that
+        reliably: the row falls back to column direction. Keep the background
+        opaque in both branches, the swipe actions reveal from behind it.
       */}
       <Pressable
         onLongPress={onLongPress}
@@ -236,8 +189,6 @@ export function InboxRowItem({
             gap: Spacing.three,
             paddingVertical: Spacing.three,
             paddingRight: Spacing.four,
-            // The dot sits in this gutter, so an unread row is scannable from
-            // the left edge without reading any text.
             paddingLeft: Spacing.two,
           }}
         >
@@ -356,11 +307,7 @@ export function InboxRowItem({
       </Pressable>
       </Link.Trigger>
       <Link.Menu>
-        {/*
-          Read only, never unread: there is no aggregate mark-unread endpoint,
-          so the reverse cannot be honoured at row granularity. `hidden` rather
-          than omitted keeps the menu's shape stable between rows.
-        */}
+        {/* Read only, never unread: there is no aggregate mark-unread endpoint. */}
         <Link.MenuAction
           icon="envelope.open"
           hidden={!unread}
@@ -380,16 +327,10 @@ export function InboxRowItem({
   const canMarkRead = unread;
   const canDelete = !!isAdmin && row.type === "person";
 
-  // A row the API cannot act on carries no pan handler at all, rather than one
-  // that opens onto nothing.
   if (!canMarkRead && !canDelete) return content;
 
-  /*
-    The action is revealed and then tapped; a full swipe does not fire it on
-    release. Mail can afford that shortcut because its swipe moves one message
-    into a Trash you can reopen. The equivalent slip here erases a
-    correspondent's entire history, and saasmail has no undo anywhere.
-  */
+  // Actions are revealed then tapped, never fired by a full swipe: the right
+  // one erases a correspondent's entire history and there is no undo anywhere.
   return (
     <ReanimatedSwipeable
       ref={swipeable}
@@ -412,11 +353,9 @@ export function InboxRowItem({
         canDelete
           ? () => (
               /*
-                The label takes the page background rather than white. The
-                danger token inverts between themes — a deep red in light, a
-                pale one in dark — so a fixed white label falls to roughly 2:1
-                on the dark palette. The background inverts alongside it and
-                stays legible against both.
+                Foreground is the page background, not white: the danger token
+                inverts between themes, so a fixed white label drops to about
+                2:1 on the dark palette.
               */
               <SwipeAction
                 label="Delete"
@@ -434,15 +373,7 @@ export function InboxRowItem({
   );
 }
 
-/**
- * The way back to an unsent message.
- *
- * Pinned above the list rather than given a permanent home in the toolbar,
- * because it describes a temporary condition: a bar button spent on it would
- * sit there doing nothing most of the time. The count is passed in rather than
- * read here — drafts live in device storage (`lib/drafts.ts`) rather than
- * behind a query, so there is nothing to load and nothing to fail.
- */
+/** Pinned link to unsent drafts, which live in device storage (`lib/drafts.ts`). */
 export function DraftsRow({ count }: { count: number }) {
   const c = useTheme();
   return (
@@ -463,8 +394,7 @@ export function DraftsRow({ count }: { count: number }) {
               paddingLeft: Spacing.two,
             }}
           >
-            {/* Stands in for the unread gutter, so the avatar column and
-                everything right of it lines up with the rows below. */}
+            {/* Stands in for the unread dot gutter so this row aligns with the list. */}
             <View style={{ width: 10 }} />
 
             <View
@@ -503,8 +433,7 @@ export function DraftsRow({ count }: { count: number }) {
         </Pressable>
       </Link>
 
-      {/* Full width, unlike `RowSeparator`: this divides a pinned entry point
-          from the list, not one row from the next. */}
+      {/* Full width, unlike `RowSeparator`: this divides the pinned row from the list. */}
       <View style={{ height: HAIRLINE, backgroundColor: c.border }} />
     </View>
   );
@@ -525,16 +454,8 @@ export function RowSeparator() {
 }
 
 /**
- * The one control in this app that is drawn rather than borrowed.
- *
- * UIKit's swipe actions are `UIContextualAction` on a `UITableView`, which a
- * `FlatList` is not and cannot be made into, so there is no system control to
- * reach for here. Everything else — the compose button, the filter menu, the
- * discard sheet — stays native precisely so the exceptions stay countable.
- *
- * It sizes to its own content: `ReanimatedSwipeable` measures the panel to
- * decide where "open" is, so a hardcoded width would only be one that breaks
- * at the larger Dynamic Type sizes.
+ * Sized by its own content: `ReanimatedSwipeable` measures the panel to decide
+ * where "open" is, so a hardcoded width breaks at large Dynamic Type sizes.
  */
 function SwipeAction({
   label,
@@ -577,20 +498,13 @@ function SwipeAction({
 type CachedList = [QueryKey, GroupedResponse | undefined];
 
 /**
- * Rewrite every cached page of the inbox list, and hand back what was there.
+ * Rewrite every cached page of the inbox list; returns the rollback for
+ * `restoreLists`.
  *
- * The list is keyed `[serverId, "people", "grouped", filter, search?]`, so one
- * prefix reaches all of them — the page on screen and the ones behind the
- * filter the user will switch back to. The filter is read out of its fixed
- * position rather than searched for, because a search for the word "unread"
- * would otherwise be indistinguishable from the unread filter and would start
+ * The list is keyed `[serverId, "people", "grouped", filter, search?]`. The
+ * filter is read from its fixed slot rather than searched for: a search whose
+ * text is "unread" would otherwise look like the unread filter and start
  * dropping read rows out of its own results.
- *
- * It has to be read at all because a row that was just marked read no longer
- * belongs in a list titled Unread: leaving it there until the refetch lands
- * shows a read row under a filter promising the opposite.
- *
- * The return value is the rollback — hand it to `restoreLists`.
  */
 function patchLists(
   queryClient: QueryClient,

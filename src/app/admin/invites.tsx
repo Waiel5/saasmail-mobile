@@ -24,19 +24,12 @@ import { key } from '@/lib/query';
 import { useActiveServer } from '@/lib/use-servers';
 
 /**
- * `InviteSchema` from the worker's admin router.
- *
- * The timestamps are epoch **seconds** — the columns hold dates and the route
- * divides by 1000 on the way out. Read as milliseconds, every invitation
- * expires in January 1970 and this screen shows none of them.
+ * `InviteSchema` from the worker's admin router. Timestamps are epoch
+ * **seconds**; read as milliseconds every invitation expires in 1970.
  */
 interface Invite {
   id: string;
-  /**
-   * The credential itself: whoever holds this can create an account on the
-   * deployment. It is never logged, and leaves the app only through a share
-   * sheet the operator opened.
-   */
+  /** The credential itself: whoever holds it can create an account. Never log it. */
   token: string;
   role: string;
   email: string | null;
@@ -47,30 +40,10 @@ interface Invite {
   createdAt: number;
 }
 
-/**
- * Seven days is the server's ceiling for a bearer caller, not a house
- * preference. Offering 14 would put an option in the picker that always fails.
- */
+/** Seven days is the server's ceiling for a bearer caller; 14 would always fail. */
 const EXPIRY_CHOICES = [1, 3, 7] as const;
 type ExpiryDays = (typeof EXPIRY_CHOICES)[number];
 
-/**
- * Inviting somebody to this deployment.
- *
- * The form is an address and an expiry and nothing else, because that is the
- * only shape of invitation an OAuth client may mint: the server clamps the body
- * to `role: "member"`, an address the invitation is pinned to, and at most seven
- * days. It refuses the whole request rather than dropping the field it dislikes,
- * so a role picker here would be a control whose every non-default value fails.
- * Admin invitations are made in a browser, which the note under the form says
- * out loud rather than leaving the absence to be discovered.
- *
- * Reading the invitation list is closed to this app under the same policy — a
- * live token is as good as an account, so only a browser session may enumerate
- * them. That refusal is a normal state for this screen rather than an error, so
- * it renders as a sentence beside a working form, and invitations created here
- * stay listed from memory.
- */
 export default function InvitesScreen() {
   const c = useTheme();
   const server = useActiveServer();
@@ -78,11 +51,8 @@ export default function InvitesScreen() {
 
   const [address, setAddress] = useState('');
   const [days, setDays] = useState<ExpiryDays>(7);
-  /**
-   * Invitations created here, newest first. Held in state because the list
-   * route is usually refused — and because the token is both the only part that
-   * matters and the only part that cannot be fetched again.
-   */
+  // Kept in state because the list route is usually refused and a token is
+  // never returned a second time.
   const [mine, setMine] = useState<Invite[]>([]);
 
   const listed = useQuery({
@@ -95,9 +65,8 @@ export default function InvitesScreen() {
     mutationFn: () =>
       apiFetch<Invite>(server!.id, '/api/admin/invites', {
         method: 'POST',
-        // These three fields and no others: the bearer-token guard rejects a
-        // body carrying any field it has not classified, so an extra key fails
-        // the request rather than being quietly ignored.
+        // These three fields and no others: the bearer-token guard rejects the
+        // whole request over an unclassified key rather than ignoring it.
         body: {
           role: 'member',
           email: address.trim(),
@@ -113,8 +82,6 @@ export default function InvitesScreen() {
       queryClient.invalidateQueries({
         queryKey: key(server!.id, 'admin', 'invites'),
       });
-      // Straight into the share sheet. An invitation nobody receives is not an
-      // invitation, and this is the one moment its link is certainly in hand.
       share(invite);
     },
     onError: async (error) => {
@@ -132,9 +99,8 @@ export default function InvitesScreen() {
 
   const revoke = useMutation({
     mutationFn: (invite: Invite) =>
-      // The path takes the invitation's id. Passing the token instead answers
-      // 404 and leaves a working credential behind, which is the worst possible
-      // outcome for an action labelled "revoke".
+      // The path takes the id. The token answers 404 and leaves the credential
+      // working.
       apiFetch<{ success: true }>(
         server!.id,
         `/api/admin/invites/${encodeURIComponent(invite.id)}`,
@@ -160,17 +126,13 @@ export default function InvitesScreen() {
     const url = `${server!.origin}/invite/${invite.token}`;
     try {
       await Share.share(
-        // iOS treats `url` as a link activity item, so Messages inserts a real
-        // link and the sheet's own Copy copies the address — which is where
-        // copying lives, this app having no clipboard module of its own.
-        // Android's Share ignores `url` outright and would present an empty
-        // sheet, so there the link has to travel as the message body.
+        // Android's Share ignores `url` and would present an empty sheet, so
+        // there the link has to travel as `message`.
         process.env.EXPO_OS === 'ios' ? { url } : { message: url },
         { subject: `Join ${server!.brandName}` },
       );
     } catch {
-      // A sheet that failed to present is not worth an alert: the link is still
-      // on screen and the row offers the same action again.
+      // A sheet that failed to present needs no alert; the row offers it again.
     }
   }
 
@@ -227,16 +189,14 @@ export default function InvitesScreen() {
         ? 'That does not look like an email address.'
         : null;
 
-  // Invitations made here first, then whatever the server was willing to list,
-  // minus the overlap. Without the union a fresh invitation vanishes between
-  // the mutation and the refetch — and its token is the only copy in existence.
+  // Without the union a fresh invitation vanishes between the mutation and the
+  // refetch, and its token is the only copy in existence.
   const rows = [
     ...mine,
     ...(listed.data ?? []).filter((row) => !mine.some((own) => own.id === row.id)),
   ].filter(isUsable);
 
-  // Reachable by signing out of the last account while this screen is open.
-  // Everything below builds a link out of `server.origin`.
+  // Reachable by signing out of the last account with this screen open.
   if (!server) {
     return (
       <View
@@ -262,12 +222,6 @@ export default function InvitesScreen() {
     <>
       <Stack.Screen options={{ title: 'Invites', headerLargeTitle: true }} />
 
-      {/*
-        The inbox's bar with this screen's nouns in it: contextual action left,
-        the thing that creates something right and detached. The share button
-        appears only once there is a link to share, exactly as the thread
-        screen's reply button appears only once there is something to reply to.
-      */}
       <Stack.Toolbar placement="bottom">
         {mine[0] ? (
           <Stack.Toolbar.Button
@@ -297,11 +251,6 @@ export default function InvitesScreen() {
           // Clears the floating toolbar, which otherwise sits on the last row.
           paddingBottom: Spacing.four + 72,
         }}>
-        {/*
-          No form at all when the account or the app lacks the admin surface:
-          creating would fail exactly as listing did, and a form that cannot
-          submit is a worse answer than the sentence explaining why.
-        */}
         {refusal?.blocking ? null : (
           <Section title="Invite someone">
             <Card>
@@ -350,10 +299,8 @@ export default function InvitesScreen() {
                   {i > 0 ? <Divider /> : null}
                   <InviteRow
                     invite={invite}
-                    // The link is printed only for invitations created here.
-                    // Anything the server listed is already sendable from the
-                    // share sheet, and a screen of live tokens is a screen of
-                    // live credentials.
+                    // Only tokens minted here are printed: a screen of listed
+                    // tokens is a screen of live credentials.
                     link={
                       mine.some((own) => own.id === invite.id)
                         ? `${server.origin}/invite/${invite.token}`
@@ -381,7 +328,6 @@ export default function InvitesScreen() {
   );
 }
 
-/** Still redeemable: nobody has used it and it has not run out. */
 function isUsable(invite: Invite): boolean {
   return !invite.usedBy && invite.expiresAt * 1000 > Date.now();
 }
@@ -391,13 +337,8 @@ function expiryLabel(days: number): string {
 }
 
 /**
- * Why the list is missing, and whether creating still works.
- *
- * Three different 403s reach this screen and only one of them leaves the form
- * usable, so they are told apart by the server's own code rather than collapsed
- * into "forbidden". Reporting the wrong one sends an operator off to re-consent
- * an app that is working correctly, or to file a bug against a deliberate
- * policy.
+ * Three different 403s reach this screen and only `OAUTH_SCOPE_DENIED` leaves
+ * the form usable, so they are told apart by code rather than by kind.
  */
 function explainListFailure(
   error: unknown,
@@ -455,11 +396,7 @@ function InviteRow({
         {invite.role === 'admin' ? 'Admin' : 'Member'} · Expires{' '}
         {formatMessageTime(invite.expiresAt)}
       </Text>
-      {/*
-        Selectable so iOS's own selection menu offers Copy on a long press. It
-        is the second of the two copy paths this app can offer without a
-        clipboard dependency; the first is the share sheet's Copy activity.
-      */}
+      {/* Selectable for iOS's own Copy: this app ships no clipboard module. */}
       {link ? (
         <Text
           selectable
@@ -531,13 +468,7 @@ function Note({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * One form row: a fixed-width label, then the control.
- *
- * The label column is a fixed width rather than intrinsic so the values line up
- * down one edge; with intrinsic widths each row starts its value at a different
- * x and two rows read as two unrelated things.
- */
+/** The label width is fixed, not intrinsic, so values line up down one edge. */
 function Field({
   label,
   onPress,

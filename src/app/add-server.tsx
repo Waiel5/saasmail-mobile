@@ -18,19 +18,6 @@ import { ServerError, probeServer, signInToServer } from '@/lib/auth';
 import { upsertServer, writeCredentials } from '@/lib/servers';
 import type { Me } from '@/lib/types';
 
-/**
- * Connect a saasmail deployment.
- *
- * The address comes first and the credentials never appear here at all: the
- * whole point of doing this over OAuth in the system browser is that the app
- * never sees a password, and the user's existing passkey keeps working because
- * the ceremony runs on their own domain.
- *
- * Progress is inline rather than a blocking spinner. Reaching an arbitrary
- * self-hosted server can be slow, DNS-broken, or answered by something that is
- * not saasmail at all, and a modal spinner over any of those traps the user in
- * a screen they cannot correct.
- */
 export default function AddServerScreen() {
   const c = useTheme();
   const router = useRouter();
@@ -47,22 +34,20 @@ export default function AddServerScreen() {
       const probe = await probeServer(address);
 
       setStatus('authorizing');
-      const { record, credentials } = await signInToServer(probe);
+      const { record, credentials } = await signInToServer(probe, { wantsAdmin: true });
 
-      // Persist credentials before the record: a record without credentials is
-      // a server the UI lists and cannot use, whereas credentials without a
-      // record are invisible and harmless until the record lands.
+      // Credentials before the record: a record without them is a server the
+      // UI lists and cannot use. The other order is invisible and harmless.
       await writeCredentials(record.id, credentials);
       upsertServer(record);
 
-      // Identity is fetched after the server exists so the request can go
-      // through the ordinary authenticated path rather than a special case.
+      // After the upsert: `apiFetch` looks the server up by id.
       try {
         const me = await apiFetch<Me>(record.id, '/api/user/me');
         upsertServer({ ...record, userId: me.id, userEmail: me.email, role: me.role ?? undefined });
       } catch {
-        // Not fatal — the account works, the app just will not know whether to
-        // offer admin screens until the next successful fetch.
+        // Not fatal: the account works, admin screens stay hidden until a
+        // later fetch fills in the role.
       }
 
       if (process.env.EXPO_OS === 'ios') {

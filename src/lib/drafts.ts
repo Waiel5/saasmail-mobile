@@ -1,21 +1,7 @@
 /**
- * Unsent messages, stored on the device.
- *
- * Local because there is nowhere else. saasmail has no draft storage of any
- * kind — no table, no endpoint — so a draft that is not on this phone does not
- * exist. That has one consequence worth stating plainly rather than
- * discovering: drafts do not sync. Start a message on a phone and it is not on
- * the tablet, and signing out of a server takes its drafts with it.
- *
- * It also means the body of an unsent message sits in application storage in
- * the clear. That is a real trade and it is the same one Mail makes, for the
- * same reason: a draft that does not survive the app being killed is not a
- * draft, it is a form. What is stored is only what the user has typed here —
- * received mail is still never persisted (see `lib/query.ts`).
- *
- * SQLite rather than the key-value store the server list uses: drafts are rows
- * that want ordering and a per-server filter, and re-serialising an array of
- * whole message bodies on every keystroke of an autosave is the wrong shape.
+ * Device-local only: saasmail has no draft table or endpoint, so drafts never
+ * sync and signing out of a server takes its drafts with it. Bodies sit in
+ * application storage in the clear; received mail is still never persisted.
  */
 import { openDatabaseSync } from 'expo-sqlite';
 import { randomUUID } from 'expo-crypto';
@@ -28,7 +14,6 @@ export interface Draft {
   from: string;
   subject: string;
   body: string;
-  /** Set when this draft is a reply; the id of the message being answered. */
   replyToEmailId: string | null;
   /** Who the reply goes to, so the list can name it without a fetch. */
   replyToLabel: string | null;
@@ -90,15 +75,9 @@ export function subscribeDrafts(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
-/**
- * Snapshots cached per server, invalidated on write.
- *
- * `useSyncExternalStore` compares by identity and re-renders on any new
- * reference, so returning a freshly-mapped array from every read loops until
- * React gives up with "Maximum update depth exceeded" — the same trap the
- * server list hit. A version counter that only moves on write makes the
- * reference stable while nothing has changed.
- */
+// `useSyncExternalStore` compares snapshots by identity, so a freshly-mapped
+// array on every read loops until "Maximum update depth exceeded". The version
+// only moves on write, which keeps the reference stable in between.
 let version = 0;
 const cache = new Map<string, { version: number; rows: Draft[] }>();
 const EMPTY: Draft[] = [];
@@ -134,7 +113,6 @@ export function countDrafts(serverId: string | null | undefined): number {
   return listDrafts(serverId).length;
 }
 
-/** True when there is nothing worth keeping — every field blank. */
 export function isBlank(
   draft: Pick<Draft, 'to' | 'cc' | 'subject' | 'body'>,
 ): boolean {
@@ -146,13 +124,7 @@ export function isBlank(
   );
 }
 
-/**
- * Write a draft, returning its id.
- *
- * The id is generated here when absent so a compose screen can call this
- * repeatedly as the user types and keep updating one row rather than
- * accumulating one per keystroke.
- */
+/** Upsert; generates the id when absent so an autosave keeps updating one row. */
 export function saveDraft(
   draft: Omit<Draft, 'id' | 'updatedAt'> & { id?: string },
 ): string {
@@ -193,13 +165,7 @@ export function deleteDraft(id: string): void {
   invalidate();
 }
 
-/**
- * Drop every draft belonging to a server.
- *
- * Called when an account is removed. Leaving them would strand unsent messages
- * addressed from an account the app can no longer send through, and they would
- * silently reappear if the same deployment were added again later.
- */
+/** Call on account removal: ids are origins, so leftovers reappear on re-add. */
 export function deleteDraftsForServer(serverId: string): void {
   db.runSync('DELETE FROM drafts WHERE serverId = ?', serverId);
   invalidate();

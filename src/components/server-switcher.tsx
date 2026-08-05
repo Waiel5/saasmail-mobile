@@ -10,18 +10,8 @@ import { setActiveServerId } from "@/lib/servers";
 import { useActiveServer, useServers } from "@/lib/use-servers";
 
 /**
- * The active server, as a tappable navigation title.
- *
- * Switching lives here rather than in Settings because for this app it is not a
- * setting — it is the frame everything else is read through. A user with a work
- * deployment and a client's deployment changes it many times a day, and burying
- * that behind a tab costs them a detour every time. Apps whose accounts are
- * similarly load-bearing put it in the same place.
- *
- * Always tappable, even with a single server. That was not always true — the
- * chevron used to be hidden when there was nothing to switch to — but the sheet
- * now also holds Settings, so making the title inert on a one-server install
- * put a whole destination out of reach.
+ * The active server, as a tappable navigation title. Stays tappable with a
+ * single server: the sheet is also the only route to Settings.
  */
 export function ServerSwitcherTitle() {
   const c = useTheme();
@@ -117,9 +107,8 @@ export function ServerSwitcherTitle() {
                         : "transparent",
                     })}
                   >
-                    {/* Colour derived from the host, so two deployments are
-                        distinguishable at a glance even when both are called
-                        "saasmail" — which, unbranded, they both are. */}
+                    {/* Two unbranded deployments are both named "saasmail", so
+                        the host tint is what tells them apart. */}
                     <View
                       style={{
                         width: 36,
@@ -166,12 +155,6 @@ export function ServerSwitcherTitle() {
               ))}
             </View>
 
-            {/*
-              Settings lives here rather than in the app chrome. It is almost
-              entirely per-server — which account, which inboxes, notification
-              preferences — so it belongs with the account list, and keeping it
-              out of the toolbar is what let the tab bar go entirely.
-            */}
             <View
               style={{
                 backgroundColor: c.surface,

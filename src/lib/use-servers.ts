@@ -1,10 +1,5 @@
-/**
- * React bindings over the server store.
- *
- * The store is deliberately plain module state rather than a context: push
- * notification handlers, the API layer and the WebSocket all need to read it,
- * and none of them are inside the React tree.
- */
+// The store stays module state, not context: push handlers, the API layer and
+// the socket all read it from outside the React tree.
 import { useCallback, useSyncExternalStore } from 'react';
 
 import {

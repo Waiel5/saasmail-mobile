@@ -24,16 +24,11 @@ import { key } from '@/lib/query';
 import type { Me } from '@/lib/types';
 import { useActiveServer } from '@/lib/use-servers';
 
-/**
- * `SuppressionSchema` from the worker's suppressions router.
- *
- * `reason` is the whole story of the row: `unsubscribe` is the recipient's own
- * decision, recorded when they used the link saasmail appends to outbound mail;
- * `manual` is an operator's, written by the route this screen posts to.
- */
+/** `SuppressionSchema` from the worker's suppressions router. */
 interface Suppression {
   id: string;
   email: string;
+  /** `unsubscribe` is the recipient's own decision; `manual` is an operator's. */
   reason: 'unsubscribe' | 'manual';
   /** `admin:<email>`, `one-click` or `user-link` on rows this deployment wrote. */
   source: string | null;
@@ -43,35 +38,16 @@ interface Suppression {
 }
 
 /**
- * One page of `GET /api/suppressions`, newest first.
- *
- * `nextCursor` is the `createdAt` of the last row as a string, and the comparison
- * it feeds is exclusive — so a row sharing that second with the last row of a
- * page is never returned rather than returned twice. Nothing this screen can
- * correct from the client. It is written down because this list is the evidence
- * somebody uses to explain a message that did not arrive, and at a page boundary
- * it can be one row short of the truth.
+ * One page of `GET /api/suppressions`, newest first. `nextCursor` is the last
+ * row's `createdAt` and the comparison it feeds is exclusive, so a row sharing
+ * that second with a page boundary is dropped rather than duplicated. Not
+ * fixable from the client.
  */
 interface SuppressionPage {
   items: Suppression[];
   nextCursor: string | null;
 }
 
-/**
- * The addresses this server refuses to send to.
- *
- * This is the screen that answers "I sent it and nothing happened". A send to a
- * suppressed address is not attempted and not recorded — the route still answers
- * 201, with the outcome in `status`, so from the caller's side the request
- * succeeded and the mail simply never existed. The composer reports that as "Not
- * delivered"; this is where the reason lives, so the explanation is stated on the
- * screen rather than left to be inferred from a list of addresses.
- *
- * Grouped by reason rather than carrying a reason column, because the two groups
- * are not the same kind of entry: one is a decision the recipient made and the
- * other is one an operator made, and that difference is what makes removing a
- * row either routine or something to think twice about.
- */
 export default function SuppressionsScreen() {
   const c = useTheme();
   const server = useActiveServer();
@@ -79,10 +55,8 @@ export default function SuppressionsScreen() {
 
   const [address, setAddress] = useState('');
 
-  // Same key as the admin hub's, so arriving from it needs no request at all.
-  // The stored role is only a snapshot taken at sign-in and the identity fetch
-  // is allowed to fail there, which is why the hub asks again and why this
-  // screen reads its answer instead of trusting the snapshot alone.
+  // Same key as the admin hub's, so arriving from it is a cache hit. Asking at
+  // all because server.role is a sign-in snapshot that may be missing.
   const me = useQuery({
     queryKey: key(server?.id ?? 'none', 'me'),
     enabled: !!server,
@@ -93,9 +67,6 @@ export default function SuppressionsScreen() {
 
   const query = useInfiniteQuery({
     queryKey: key(server?.id ?? 'none', 'suppressions'),
-    // Waiting for the role costs an admin nothing — `server.role` resolves
-    // synchronously in the common case — and spares a member a request that
-    // exists only to be refused.
     enabled: !!server && isAdmin,
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) =>
@@ -130,10 +101,6 @@ export default function SuppressionsScreen() {
       setAddress('');
       invalidate();
 
-      // Nothing is said when the row is new: it appears at the top of the list a
-      // moment later, and an alert confirming what the screen already shows is
-      // noise. A row that was already there is worth interrupting for, because
-      // the operator asked for a change and got none.
       const existing = alreadyThere(row, rows);
       if (existing) Alert.alert('Already suppressed', existing);
     },
@@ -141,8 +108,8 @@ export default function SuppressionsScreen() {
   });
 
   const remove = useMutation({
-    // Idempotent server-side: a row somebody else already deleted still answers
-    // 200, so a stale id from this list cannot turn into an error alert.
+    // Idempotent: a row somebody else already deleted still answers 200, so a
+    // stale id cannot turn into an error alert.
     mutationFn: (row: Suppression) =>
       apiFetch<{ deleted: true }>(
         server!.id,
@@ -159,10 +126,6 @@ export default function SuppressionsScreen() {
   });
 
   function confirmRemove(row: Suppression) {
-    // Both messages name the address and say plainly that mail resumes, because
-    // that is the consequence — the row is small, what it was holding back is
-    // not. An unsubscribe additionally names whose decision is being reversed:
-    // removing it does not restore a default, it overrides a person.
     const message =
       row.reason === 'unsubscribe'
         ? `${row.email} asked to stop receiving mail on ${formatMessageTime(row.createdAt)}. Removing this entry reverses that and this server will send to them again. Do it only if they have asked you to.`
@@ -196,8 +159,7 @@ export default function SuppressionsScreen() {
       ? 'That does not look like an email address.'
       : null;
 
-  // Reachable by signing out of the last account while this screen is open.
-  // Everything below addresses a specific server by id.
+  // Reachable by signing out of the last account with this screen open.
   if (!server) {
     return (
       <View
@@ -218,13 +180,6 @@ export default function SuppressionsScreen() {
     <>
       <Stack.Screen options={{ title: 'Suppressions', headerLargeTitle: true }} />
 
-      {/*
-        The create action in the detached right slot, exactly where the invite
-        screen puts its own. Nothing occupies the left: this screen has one verb.
-        Absent rather than disabled for a member, because the form it submits is
-        not on their screen either and a lone dimmed button offers no reading of
-        why.
-      */}
       {isAdmin ? (
         <Stack.Toolbar placement="bottom">
           <Stack.Toolbar.Spacer />
@@ -287,13 +242,6 @@ export default function SuppressionsScreen() {
 
               {trimmed && problem ? <Note>{problem}</Note> : null}
 
-              {/*
-                The whole point of the screen, said once and in the operator's
-                own terms. Every clause is a behaviour of `lib/send.ts`: the
-                suppression check runs before the transport, the send route
-                answers 201 whatever the outcome, and a suppressed To cancels
-                the message including its Cc recipients.
-              */}
               <Note>
                 This server will not send to an address on this list. The message is
                 cancelled before it reaches the mail provider and nothing is written to
@@ -366,8 +314,7 @@ function SuppressionRow({ row, onPress }: { row: Suppression; onPress: () => voi
   return (
     <Pressable
       onPress={onPress}
-      // Both gestures open the same sheet. Nothing sits behind this row, so a
-      // tap that did nothing would be the only thing most people ever discover.
+      // Same sheet on both gestures: nothing else sits behind this row.
       onLongPress={onPress}
       accessibilityRole="button"
       accessibilityHint="Shows what you can do to this entry"
@@ -389,12 +336,6 @@ function SuppressionRow({ row, onPress }: { row: Suppression; onPress: () => voi
   );
 }
 
-/**
- * When the entry arrived and where from, in one line.
- *
- * The reason is the section header above the row, so it is not repeated here —
- * only its verb, which is what carries the date.
- */
 function describeEntry(row: Suppression): string {
   const verb = row.reason === 'unsubscribe' ? 'Unsubscribed' : 'Added';
   const origin = describeSource(row.source);
@@ -403,13 +344,8 @@ function describeEntry(row: Suppression): string {
 }
 
 /**
- * `source` in words.
- *
- * Three values are written by this deployment: `admin:<email>` by the route this
- * screen posts to, `one-click` and `user-link` by the unsubscribe route.
- * Anything else is shown verbatim rather than dropped — it is the only record of
- * where the entry came from, and a row whose origin this app cannot name is
- * exactly the row an operator most wants the origin of.
+ * This deployment writes three values: `admin:<email>`, `one-click`,
+ * `user-link`. Anything else is shown verbatim rather than dropped.
  */
 function describeSource(source: string | null): string | null {
   if (!source) return null;
@@ -420,16 +356,11 @@ function describeSource(source: string | null): string | null {
 }
 
 /**
- * Why the address was already suppressed, or null when it was not.
- *
- * `POST /api/suppressions` is idempotent on the address: 201 when it wrote a row,
- * 200 when it found one. `apiFetch` resolves to the parsed body rather than the
- * response, so the status code never reaches here and the difference has to come
- * out of the row itself. Two signals cannot be wrong — this route only ever
- * writes `reason: "manual"`, so any other reason predates the request, and an id
- * already on screen cannot have been minted by it. Neither firing means only that
- * this cannot be proven, so nothing is claimed: the address is suppressed either
- * way, which is what the operator asked for.
+ * `POST /api/suppressions` answers 201 when it wrote a row and 200 when it found
+ * one, with an identical body; `apiFetch` returns the body only, so the status
+ * never reaches here. The route only ever writes `reason: "manual"`, so any
+ * other reason predates the request. Returns null when neither signal fires
+ * rather than guessing.
  */
 function alreadyThere(row: Suppression, listed: Suppression[]): string | null {
   const known = listed.some((existing) => existing.id === row.id);
@@ -448,13 +379,9 @@ interface ReasonSection {
 function titleOf(reason: string): string {
   if (reason === 'manual') return 'Added by an admin';
   if (reason === 'unsubscribe') return 'Unsubscribed';
-  // A reason this app has not heard of keeps its own name, the way an unknown
-  // role does on the people screen. Filing it under a familiar heading would
-  // make the header a guess about who decided this.
   return reason;
 }
 
-/** Operator decisions first: they are the ones this screen can safely undo. */
 function rankOf(reason: string): number {
   if (reason === 'manual') return 0;
   if (reason === 'unsubscribe') return 1;
@@ -462,11 +389,8 @@ function rankOf(reason: string): number {
 }
 
 /**
- * Grouped rather than partitioned into the two known reasons.
- *
- * A filter would drop a row whose reason this app does not recognise, and that
- * address would still be suppressed — a screen whose job is explaining missing
- * mail must not become the thing that hides the explanation.
+ * Grouped, not partitioned into the two known reasons: filtering would hide a
+ * row whose reason this app does not recognise, and it is still suppressed.
  */
 function groupByReason(rows: Suppression[]): ReasonSection[] {
   const groups = new Map<string, Suppression[]>();
@@ -478,18 +402,11 @@ function groupByReason(rows: Suppression[]): ReasonSection[] {
 
   return [...groups.entries()]
     .sort(([a], [b]) => rankOf(a) - rankOf(b) || a.localeCompare(b))
-    // The API returns newest first and the pages are concatenated in order, so
-    // each group is already in the order it should be read.
+    // No sort within a group: the API returns newest first and pages concatenate
+    // in order.
     .map(([reason, items]) => ({ title: titleOf(reason), rows: items }));
 }
 
-/**
- * Why the list is missing, in terms the admin can act on.
- *
- * The two that matter are not failures of the request: a missing scope and a
- * missing passkey both mean the call was never going to be made, and both are
- * fixed somewhere other than here.
- */
 function explainFailure(error: unknown): string {
   if (!(error instanceof ApiError)) return 'Something went wrong loading the list.';
   if (error.kind === 'insufficient-scope') {
@@ -507,12 +424,7 @@ function explainFailure(error: unknown): string {
   return error.message;
 }
 
-/**
- * The server's own words, not a generic failure.
- *
- * A rejected address and a refused scope read nothing alike, and only one of
- * them is worth trying again.
- */
+/** Keeps the server's own sentence: only some of its refusals are worth a retry. */
 async function failed(title: string, error: unknown): Promise<void> {
   if (process.env.EXPO_OS === 'ios') {
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -590,7 +502,7 @@ function Note({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** One form row: a fixed-width label, then the control. */
+/** The label width is fixed, not intrinsic, so values line up down one edge. */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   const c = useTheme();
   return (

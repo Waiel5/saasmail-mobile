@@ -12,10 +12,8 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   const colorScheme = useColorScheme();
 
-  // `preventAutoHideAsync` above holds the splash until we say so, and nothing
-  // else will: without this the app sits on the splash for ever. The server
-  // list is read synchronously from local storage, so there is nothing to wait
-  // for beyond the first render.
+  // `preventAutoHideAsync` above holds the splash until something hides it.
+  // Without this the app sits on the splash for ever.
   useEffect(() => {
     SplashScreen.hideAsync().catch(() => {
       // Already hidden, or the module is unavailable — not worth surfacing.
@@ -40,30 +38,21 @@ export default function RootLayout() {
             name="drafts"
             options={{
               title: "Drafts",
-              // Opaque, unlike the rest of the app. The list is a SwiftUI
-              // `List` inside a host view rather than a React Native scroll
-              // view, so `contentInsetAdjustmentBehavior` — the prop every
-              // other screen uses to start its content below a transparent bar
-              // — has nothing here to attach to.
+              // Opaque, unlike the rest of the app: this screen is a SwiftUI
+              // `List` in a host view, so there is no React Native scroll view
+              // for `contentInsetAdjustmentBehavior` to attach to.
               headerTransparent: false,
             }}
           />
           <Stack.Screen
             name="add-server"
             options={{
-              // A sheet rather than a full screen: adding a server is a side
-              // errand, and the sheet keeps whatever the user was doing behind
-              // it — which matters once they already have accounts and are
-              // adding another.
               presentation: "formSheet",
               sheetGrabberVisible: true,
               sheetAllowedDetents: [0.6, 1.0],
               title: "Add a server",
-              // Opaque, not the default translucent. The screen underneath has
-              // a bright lime button, and a translucent sheet let it bleed
-              // through as a coloured smudge behind the body text. Liquid glass
-              // flatters a photo or a list; it does not flatter a saturated
-              // accent sitting directly behind paragraph copy.
+              // Opaque, not the default translucent: the lime button on the
+              // screen behind bleeds through as a smudge under the body copy.
               contentStyle: {
                 backgroundColor:
                   colorScheme === "dark"
@@ -75,22 +64,11 @@ export default function RootLayout() {
           <Stack.Screen
             name="compose"
             options={{
-              // A full modal rather than a form sheet. A sheet is right for a
-              // short errand like adding a server; writing a message is the
-              // longest-lived thing anyone does in this app, and a sheet spends
-              // the top of the screen showing what is behind it at exactly the
-              // moment the keyboard is taking the bottom half.
-              //
-              // `presentation` has to be declared here, on the layout's screen
-              // — set from inside the route it is read too late to change how
-              // the screen was pushed.
+              // `presentation` must be declared here on the layout's screen;
+              // set from inside the route it is read after the push.
               presentation: 'modal',
-              // Overrides the transparent header the rest of the app uses.
-              // Transparent is right for a scrolling list, where content
-              // sliding under a blur is the effect; here it put the From row
-              // directly beneath the title, hidden behind it, with no scroll
-              // available to reveal it — the first field of the form was
-              // simply invisible.
+              // Transparent would put the From row behind the title with no
+              // scroll available to reveal it.
               headerTransparent: false,
               contentStyle: {
                 backgroundColor:

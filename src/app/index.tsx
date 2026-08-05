@@ -50,17 +50,8 @@ export default function InboxScreen() {
       ),
   });
 
-  /*
-    Re-read who this account is, rather than trusting what it was.
-
-    `ServerRecord.role` is written once, when the server is added, and the
-    admin surface is gated on it. A snapshot is wrong in both directions: an
-    account promoted after connecting never sees the admin screens, and one
-    demoted afterwards keeps a Delete swipe on every row until it signs out and
-    back in. The server answers this cheaply and is the only authority on it —
-    every `/api/admin/*` route re-checks regardless, so the gate is about not
-    offering a door that opens onto a 403, not about enforcement.
-  */
+  // `server.role` is a snapshot taken when the server was added, so it goes
+  // stale on promotion or demotion. Re-read it and write it back below.
   const me = useQuery({
     queryKey: key(server?.id ?? "none", "me"),
     enabled: !!server,
@@ -88,23 +79,14 @@ export default function InboxScreen() {
     <>
       <Stack.Screen
         options={{
-          // `title` is set empty as well as supplying `headerTitle`: the
-          // custom component replaces the title view, but the route name
-          // ("index") still renders behind it otherwise.
+          // Empty `title` as well as `headerTitle`: without it the route name
+          // ("index") still renders behind the custom component.
           title: "",
           headerTitle: () => <ServerSwitcherTitle />,
           headerTransparent: true,
         }}
       />
-      {/*
-        Admin takes the navigation bar's leading slot rather than a place in
-        the filter menu opposite it. That menu is a filter — its glyph fills to
-        show filtering is on — and hanging a destination off it would make one
-        control mean two things. It is absent rather than disabled for members:
-        `/api/admin/*` answers 403 to them, so the button would be a door onto
-        a wall. The record's `role` is advisory (the server enforces its own),
-        which is exactly why this only decides what to draw.
-      */}
+      {/* Advisory only: `/api/admin/*` re-checks the role server-side. */}
       {server.role === "admin" ? (
         <Stack.Toolbar placement="left">
           <Stack.Toolbar.Button
@@ -116,17 +98,9 @@ export default function InboxScreen() {
       ) : null}
 
       {/*
-        A named filter, not a nameless mode.
-
-        Mail puts its filter bottom-left, but it earns that slot by expanding
-        into a labelled "Filtered by / Unread" capsule when active. A
-        UIBarButtonItem cannot do that — set `icon` and the title is dropped and
-        kept only for VoiceOver — so an icon-only toggle down there means
-        tapping it empties the list with nothing on screen saying why. The one
-        thing a filter must never be is silently on.
-
-        A menu names both states and marks the chosen one, and the filled glyph
-        shows at a glance that filtering is active.
+        A menu rather than a toggle button: setting `icon` on a bar button
+        drops its title (VoiceOver only), so a plain toggle would empty the
+        list with nothing on screen naming the filter.
       */}
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu
@@ -158,14 +132,10 @@ export default function InboxScreen() {
       />
 
       {/*
-        The gesture root lives on this screen rather than in `_layout`, because
-        this is the only screen with gestures. Nothing else belongs inside it:
-        `react-native-screens` reaches a screen's content scroll view by walking
-        `subviews[0]` downwards, and it is that view which is handed the
-        content-inset adjustment and the scroll-edge effect — so a sibling added
-        above the list here would quietly take both away from it. Dropping the
-        wrapper is worse still: `GestureDetector` throws on mount in development
-        without one.
+        Keep the list the only child: `react-native-screens` finds the content
+        scroll view by walking `subviews[0]`, so a sibling above it here steals
+        the content-inset adjustment and scroll-edge effect. The wrapper itself
+        is required — `GestureDetector` throws on mount in dev without one.
       */}
       <GestureHandlerRootView style={{ flex: 1 }}>
         <FlatList
@@ -181,9 +151,6 @@ export default function InboxScreen() {
               onRefresh={() => query.refetch()}
             />
           }
-          // Drafts are unsent mail with nowhere else to be listed, so they sit
-          // above everything received. Absent rather than zeroed when there are
-          // none: the row exists to say something is still waiting to go out.
           ListHeaderComponent={
             drafts.length > 0 ? <DraftsRow count={drafts.length} /> : null
           }
@@ -212,19 +179,9 @@ export default function InboxScreen() {
       </GestureHandlerRootView>
 
       {/*
-        Two capsules with air between them, not one crowded bar.
-
-        `separateBackground` on the search slot is not only cosmetic: it makes
-        UIKit render the search as `integratedButton`, so it sits there as a
-        magnifying glass and expands into the full field on tap. Stretched
-        across the bar instead, the search field is the widest thing on screen
-        and reads as the primary action — which it is not. Compose is.
-
-        Both items are UIBarButtonItems. The previous version of this screen
-        hand-rolled a circular Pressable with a box shadow, which is an Android
-        FAB drawn in JavaScript: not the platform's control and not its shape.
-        These inherit the system tint, the liquid-glass material, the press
-        behaviour and the accessibility semantics for free.
+        `separateBackground` is not cosmetic on the search slot: it makes UIKit
+        render the search as `integratedButton`, a glyph that expands into the
+        field on tap instead of stretching across the whole bar.
       */}
       <Stack.Toolbar placement="bottom">
         <Stack.Toolbar.SearchBarSlot separateBackground />
@@ -245,13 +202,6 @@ export default function InboxScreen() {
   );
 }
 
-/**
- * Every way this list can be empty, said differently.
- *
- * They are genuinely different situations, and collapsing them into "no
- * messages" sends people looking for a problem in the wrong place — most
- * sharply for an account that is refused rather than quiet.
- */
 function EmptyState({
   error,
   unreadOnly,
@@ -273,8 +223,7 @@ function EmptyState({
   if (error instanceof ApiError) {
     icon = "sf:exclamationmark.triangle";
     if (error.kind === "passkey-required") {
-      // Retrying cannot fix this and neither can a fresh token, so this offers
-      // the actual remedy rather than a button that does nothing.
+      // No retry action: neither a refetch nor a fresh token can clear this.
       message =
         "This account needs a passkey before the app can read mail. Open your server in a browser, register one, then pull to refresh.";
     } else if (error.kind === "insufficient-scope") {
@@ -335,14 +284,8 @@ function EmptyState({
   );
 }
 
-/**
- * What a brand-new install sees.
- *
- * Deliberately not a redirect into the add-server sheet: a sheet presented over
- * an empty stack has nothing behind it and reads as a blank screen. This
- * explains *why* an address is needed — self-hosting is the part a newcomer
- * will not assume.
- */
+// Not a redirect into the add-server sheet: presented over an empty stack it
+// has nothing behind it and reads as a blank screen.
 function FirstRun() {
   const c = useTheme();
   const router = useRouter();

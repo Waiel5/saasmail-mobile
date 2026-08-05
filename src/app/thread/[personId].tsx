@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useRef } from 'react';
 import { ActivityIndicator, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 
 import { MessageBody } from '@/components/message-body';
@@ -12,19 +13,8 @@ import { key } from '@/lib/query';
 import type { Message, MessagesResponse } from '@/lib/types';
 import { useActiveServer } from '@/lib/use-servers';
 
-/**
- * One conversation.
- *
- * Renders both shapes the inbox can produce. A `person` row is a timeline with
- * one correspondent and comes from `/api/emails/by-person`; a `group` row is a
- * multi-participant thread from `/api/conversations/{id}/emails`. They differ
- * only in where the messages come from, so everything below this fetch is
- * shared.
- *
- * Each inbox is configured `thread` or `chat` server-side and this honours it:
- * chat strips subjects and uses bubbles, thread keeps them. The same screen has
- * to do both because a user's inboxes can disagree.
- */
+// `displayMode` is per inbox and set server-side, so one account can have both
+// chat and thread conversations. This screen renders either.
 export default function ThreadScreen() {
   const c = useTheme();
   const { personId, type } = useLocalSearchParams<{ personId: string; type?: string }>();
@@ -44,10 +34,38 @@ export default function ThreadScreen() {
       ),
   });
 
+  const queryClient = useQueryClient();
+  const unread = query.data?.emails.some((m) => m.isRead === 0) ?? false;
+  const marked = useRef(false);
+
+  const markRead = useMutation({
+    mutationFn: () =>
+      apiFetch(
+        server!.id,
+        isGroup ? '/api/conversations/mark-read' : '/api/people/mark-read',
+        {
+          method: 'POST',
+          body: isGroup
+            ? { conversationIds: [personId] }
+            : { personIds: [personId] },
+        },
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: key(server!.id) }),
+  });
+
+  // Opening a conversation is reading it. Without this the only way to clear a
+  // badge is the list swipe, so an inbox read on the phone stays entirely lit.
+  useEffect(() => {
+    if (!server || !unread || marked.current) return;
+    marked.current = true;
+    markRead.mutate();
+  }, [server, unread, markRead]);
+
   const messages = query.data?.emails ?? [];
-  // Oldest first, so the newest message is where the scroll lands.
   const ordered = [...messages].sort((a, b) => a.timestamp - b.timestamp);
   const chatMode = query.data?.inboxes?.[0]?.displayMode === 'chat';
+  // Newest *received*, not `ordered.at(-1)`: `POST /api/send/reply/{emailId}`
+  // needs an id that arrived, and the last word is often ours.
   const latestInbound = [...ordered]
     .reverse()
     .find((m) => m.type === 'received');
@@ -61,27 +79,6 @@ export default function ThreadScreen() {
     <>
       <Stack.Screen options={{ title, headerBackButtonDisplayMode: 'minimal' }} />
 
-      {/*
-        The same grammar as the inbox: contextual action on the left, compose
-        detached on the right. Mail does this too — its compose button stays in
-        the corner on the message screen as well as the list, so "write
-        something new" is never more than one tap from anywhere. Keeping the
-        two bars structurally identical means the corner your thumb has learned
-        does not change meaning when you open a conversation.
-
-        Reply targets the newest *received* message, not the newest message.
-        `POST /api/send/reply/{emailId}` needs something that arrived, and
-        taking `ordered.at(-1)` blindly hands it a sent id whenever the last
-        word was yours — which in a support mailbox is most of the time. Its
-        `recipient` is the inbox the mail came in on, so passing it opens the
-        composer on the address the sender actually wrote to rather than on
-        whichever identity happens to sort first.
-
-        Deliberately no trash. Mail's message view can offer one because it is
-        showing exactly one message; this screen is a whole timeline with a
-        person, so a bin here would have to mean either "this conversation" or
-        "this person" and the icon cannot say which.
-      */}
       <Stack.Toolbar placement="bottom">
         {latestInbound ? (
           <Stack.Toolbar.Button
@@ -95,6 +92,8 @@ export default function ThreadScreen() {
                 pathname: '/compose',
                 params: {
                   replyTo: latestInbound.id,
+                  // `recipient` is the inbox the mail arrived on, i.e. the
+                  // address to send back from.
                   from: latestInbound.recipient ?? '',
                 },
               });
@@ -120,8 +119,7 @@ export default function ThreadScreen() {
         contentContainerStyle={{
           padding: Spacing.four,
           gap: Spacing.four,
-          // Clears the floating reply capsule, which otherwise sits on top of
-          // the last message rather than below it.
+          // Clears the floating reply capsule.
           paddingBottom: Spacing.four + 72,
         }}>
         {query.isLoading ? (

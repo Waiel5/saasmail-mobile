@@ -16,9 +16,6 @@ export default function SettingsScreen() {
   const activeId = useActiveServerId();
 
   async function signOut(server: ServerRecord) {
-    // Hard delete of local credentials, so it is worth one confirmation — but
-    // it destroys nothing on the server, which the copy says plainly rather
-    // than implying data loss.
     Alert.alert(
       `Sign out of ${server.brandName}?`,
       'This removes the account from this device. Nothing on the server changes.',
@@ -29,10 +26,8 @@ export default function SettingsScreen() {
           style: 'destructive',
           onPress: async () => {
             await forgetServer(server.id);
-            // Before the record goes, while the id is still meaningful.
-            // Orphaned drafts are addressed from an account the app can no
-            // longer send through, and would silently reappear if the same
-            // deployment were added again.
+            // Before `removeServer`, while the id still resolves. Orphaned
+            // drafts reappear if the same deployment is added again.
             deleteDraftsForServer(server.id);
             await removeServer(server.id);
           },

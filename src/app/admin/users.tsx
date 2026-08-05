@@ -21,38 +21,18 @@ import { ApiError, apiFetch } from '@/lib/api';
 import { key } from '@/lib/query';
 import { useActiveServer } from '@/lib/use-servers';
 
-/**
- * `GET /api/admin/users`.
- *
- * `role` is nullable and null is not "member". better-auth leaves the column
- * unset, so an account can predate any role being assigned: it is not an admin,
- * which is all the server ever checks, but calling it a member would state a
- * fact the database does not hold.
- */
+/** A row of `GET /api/admin/users`. */
 interface AdminUser {
   id: string;
   name: string;
   email: string;
+  /** Null is not "member": better-auth leaves the column unset on old accounts. */
   role: string | null;
   /** Epoch seconds, like every other timestamp this API returns. */
   createdAt: number;
   hasPasskey: boolean;
 }
 
-/**
- * Everyone with an account on this deployment.
- *
- * Grouped by role rather than carrying a role column, which is how iOS presents
- * a team: the header labels a whole run of rows, and the shape of the list —
- * how many admins, how many not — is legible before a single row is read. A
- * column repeats the same two words down the screen and leaves that shape to be
- * counted.
- *
- * The screen deliberately offers less than the API does. Removing and demoting
- * are here; promoting is not, because this app authenticates with an OAuth
- * token and the server refuses `role: "admin"` from one on purpose. Drawing the
- * control anyway would trade a plain sentence for a 403.
- */
 export default function AdminUsersScreen() {
   const router = useRouter();
   const server = useActiveServer();
@@ -107,10 +87,6 @@ export default function AdminUsersScreen() {
   };
 
   const confirmDemote = (user: AdminUser) => {
-    // Not merely a loss of these screens: an admin is allowed every inbox
-    // implicitly, so demoting drops this person to whatever `inbox_permissions`
-    // grants them by name — which, for someone who has only ever been an admin,
-    // is nothing at all.
     Alert.alert(
       `Make ${nameOf(user)} a member?`,
       `They keep their account, but lose the admin screens. Admins can read every inbox, so afterwards they will see only the inboxes granted to them individually — which may be none.`,
@@ -129,9 +105,8 @@ export default function AdminUsersScreen() {
     if (user.role === 'admin') {
       actions.push({ label: 'Make a member', run: () => confirmDemote(user) });
     } else {
-      // Where a promote action would go. The server refuses `role: "admin"`
-      // from an OAuth token however it is asked, so this offers the one route
-      // that does work instead of a control that reliably fails.
+      // No promote action: the server refuses `role: "admin"` from an OAuth
+      // token however it is asked.
       actions.push({
         label: 'Make an admin in a browser…',
         run: () => openBrowserAsync(`${server.origin}/admin/users`),
@@ -148,8 +123,6 @@ export default function AdminUsersScreen() {
     ActionSheetIOS.showActionSheetWithOptions(
       {
         title: nameOf(user),
-        // Only when it adds something: for an unnamed account the title is
-        // already the address.
         message: user.name ? user.email : undefined,
         options: [...actions.map((a) => a.label), 'Cancel'],
         cancelButtonIndex: actions.length,
@@ -164,11 +137,6 @@ export default function AdminUsersScreen() {
     <>
       <Stack.Screen options={{ title: 'People', headerLargeTitle: true }} />
 
-      {/*
-        The inbox's bar, unchanged: contextual action left, compose detached
-        right. Inviting someone is what an admin comes to a people screen to do
-        second, after looking at who is already here.
-      */}
       <Stack.Toolbar placement="bottom">
         <Stack.Toolbar.Button
           icon="person.badge.plus"
@@ -208,11 +176,8 @@ export default function AdminUsersScreen() {
         renderItem={({ item }) => (
           <UserRow
             user={item}
-            // The server refuses to delete or demote the caller, so the row it
-            // knows to be the caller offers neither. `userId` is absent when the
-            // identity fetch failed at sign-in, and then the refusal arrives
-            // from the server instead — which is why the mutations still
-            // surface it verbatim.
+            // `userId` is absent when the sign-in identity fetch failed; the
+            // server refuses to delete or demote the caller either way.
             isSelf={!!server?.userId && item.id === server.userId}
             onPress={() => openActions(item)}
           />
@@ -264,8 +229,7 @@ function UserRow({
       accessibilityRole="button"
       accessibilityHint="Shows what you can do to this person"
       onPress={onPress}
-      // Both gestures open the same sheet. Nothing sits behind this row, so a
-      // tap that did nothing would be the only thing most people ever discover.
+      // Same sheet on both gestures: nothing else sits behind this row.
       onLongPress={onPress}
       style={({ pressed }) => ({
         backgroundColor: pressed ? c.backgroundSelected : c.background,
@@ -316,8 +280,8 @@ function SectionHeader({ title }: { title: string }) {
         paddingHorizontal: Spacing.four,
         paddingTop: Spacing.five,
         paddingBottom: Spacing.two,
-        // Section headers stick, so this cannot be transparent: rows scroll
-        // underneath it.
+        // Section headers stick and rows scroll under them, so this cannot be
+        // transparent.
         backgroundColor: c.background,
       }}>
       {title}
@@ -340,20 +304,12 @@ function Note({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Inset to the text, matching the rest of the app's lists. */
 function RowSeparator() {
   const c = useTheme();
   return <View style={{ height: HAIRLINE, backgroundColor: c.border, marginLeft: Spacing.four }} />;
 }
 
-/**
- * Why the list is empty, in terms the admin can act on.
- *
- * The two that matter are not failures of the request: a missing passkey and a
- * missing admin grant both mean this app was never able to make the call, and
- * both are fixed somewhere other than here. A "try again" button on either is a
- * button that cannot work.
- */
+/** No retry on the scope and passkey cases: the call was never going to be made. */
 function EmptyState({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   const c = useTheme();
 
@@ -412,7 +368,6 @@ function EmptyState({ error, onRetry }: { error: unknown; onRetry: () => void })
 
 interface RoleSection {
   title: string;
-  /** Shown under the group when the header alone would be read as a claim. */
   note?: string;
   data: AdminUser[];
 }
@@ -421,7 +376,6 @@ function nameOf(user: AdminUser): string {
   return user.name || user.email;
 }
 
-/** Admins first, members next, anything unrecognised after, no role last. */
 function rankOf(role: string | null): number {
   if (role === 'admin') return 0;
   if (role === 'member') return 1;
@@ -431,16 +385,13 @@ function rankOf(role: string | null): number {
 function titleOf(role: string | null): string {
   if (role === 'admin') return 'Admins';
   if (role === 'member') return 'Members';
-  // A role this app has not heard of keeps its own name. Filing it under the
-  // closest familiar one would make the header a guess.
   return role ?? 'No role set';
 }
 
 function groupByRole(users: AdminUser[]): RoleSection[] {
   const groups = new Map<string | null, AdminUser[]>();
   for (const user of users) {
-    // An empty string is not a role either, and it would render as a header
-    // that is simply a gap.
+    // `||`, not `??`: "" is not a role, and it would render as an empty header.
     const role = user.role || null;
     const existing = groups.get(role);
     if (existing) existing.push(user);
@@ -462,14 +413,7 @@ async function succeeded(): Promise<void> {
   }
 }
 
-/**
- * The server's own words, not a generic failure.
- *
- * "Cannot delete yourself" and "Cannot change your own role" are the two
- * refusals an admin can act on, and both name a mistake no retry fixes.
- * Replacing them with "something went wrong" leaves someone tapping the one
- * thing that cannot work.
- */
+/** Keeps the server's own sentence: its refusals name mistakes no retry fixes. */
 async function failed(title: string, error: unknown): Promise<void> {
   if (process.env.EXPO_OS === 'ios') {
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);

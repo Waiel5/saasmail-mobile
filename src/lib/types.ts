@@ -1,20 +1,10 @@
 /**
- * Response shapes, transcribed from the worker's Zod schemas.
- *
- * Hand-written rather than generated because the OpenAPI document is served at
- * runtime from `/doc` and is not committed, so codegen would need a running
- * deployment to build against — a poor dependency for a client that is meant to
- * work with any of them. These cover what the app actually reads.
+ * Hand-transcribed from the worker's Zod schemas. The OpenAPI document is
+ * served at runtime from `/doc` and is not committed, so codegen would need a
+ * running deployment. These cover only what the app reads.
  */
 
-/**
- * The inbox list is a heterogeneous union, not a list of threads.
- *
- * A `person` row is a one-to-one timeline with somebody; a `group` row is a
- * multi-participant conversation. They sort together by recency and render in
- * the same list, so every consumer has to handle both — which is why this is a
- * discriminated union rather than an optional-fields object.
- */
+/** The inbox list mixes both: `person` is a one-to-one timeline, `group` a thread. */
 export type InboxRow = PersonRow | GroupRow;
 
 export interface PersonRow {
@@ -49,7 +39,7 @@ export interface GroupedResponse {
   limit: number;
 }
 
-/** A message. Received and sent rows are merged server-side into one shape. */
+/** Received and sent rows, merged server-side into one shape. */
 export interface Message {
   id: string;
   type: 'received' | 'sent';
@@ -60,23 +50,14 @@ export interface Message {
   recipient?: string;
   fromAddress?: string;
   toAddress?: string;
-  /**
-   * Received only; null on sent rows.
-   *
-   * A number, not a boolean — SQLite has no boolean type and the schema is
-   * `z.number().nullable()`, so this arrives as 0 or 1.
-   */
+  /** Received only, null on sent rows. 0 or 1, not a boolean: SQLite has none. */
   isRead: number | null;
   /** Sent only. */
   status?: string | null;
   /**
-   * Epoch seconds. Named `timestamp` server-side, unifying `received_at` on
-   * inbound rows with `sent_at` on outbound ones so the two can interleave.
-   *
-   * This was previously transcribed as `createdAt`, which exists on the
-   * attachment rows but not on a message. The result was `undefined`: the
-   * header rendered "Invalid Date", and — quietly, which was worse — the
-   * thread's `sort` compared `NaN` to `NaN` and left the order untouched.
+   * Epoch seconds, unifying `received_at` and `sent_at`. Not `createdAt` —
+   * that exists on attachment rows but not on a message, and reading it gives
+   * "Invalid Date" plus a silently unsorted thread.
    */
   timestamp: number;
   attachmentCount?: number;
@@ -98,8 +79,7 @@ export interface Inbox {
   displayMode: 'thread' | 'chat';
   /**
    * Present on `GET /api/inboxes`, absent from the inboxes embedded in a
-   * messages response. Applied client-side on send — the server stores and
-   * sanitizes it but never appends it.
+   * messages response. The server stores it but never appends it on send.
    */
   signatureHtml?: string | null;
 }
@@ -116,7 +96,6 @@ export interface Me {
   role: string | null;
 }
 
-/** Display name for a row, falling back through what the API actually provides. */
 export function rowTitle(row: InboxRow): string {
   if (row.type === 'person') return row.name || row.email;
   const names = row.participants.map((p) => p.name || p.email);
@@ -125,7 +104,6 @@ export function rowTitle(row: InboxRow): string {
   return `${names[0]} & ${names.length - 1} others`;
 }
 
-/** Two-letter monogram for the avatar. */
 export function rowInitials(row: InboxRow): string {
   const title = rowTitle(row);
   const words = title.replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().split(/\s+/);

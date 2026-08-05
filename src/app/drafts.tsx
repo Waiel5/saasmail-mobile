@@ -29,26 +29,12 @@ import { formatListTime } from '@/lib/format';
 import { useDrafts } from '@/lib/use-drafts';
 import { useActiveServer } from '@/lib/use-servers';
 
-/**
- * Height reserved below the last row for the floating compose capsule, which
- * otherwise sits on top of it rather than below it.
- */
+/** Space below the last row, or the floating compose capsule covers it. */
 const TOOLBAR_CLEARANCE = 72;
 
-/**
- * Unsent messages.
- *
- * The one screen built from SwiftUI rather than React Native views, and not by
- * preference: swipe-to-delete belongs to a list row, and UIKit offers it to
- * nothing else. Drawn in JavaScript instead — a pan responder sliding a red
- * rectangle out from behind a row — it would be the same kind of imitation
- * control this app took out of the inbox when the compose button stopped being
- * a Pressable with a box shadow and became a real bar button.
- *
- * Sizes come from SwiftUI's own text styles rather than from `Type`, so the
- * rows track Dynamic Type the way the system list they sit in does. Colours
- * still come from the theme, so the list matches the inbox it was opened from.
- */
+// SwiftUI rather than React Native views: swipe-to-delete exists only on a
+// list row. Fonts come from SwiftUI text styles, not `Type`, so the rows track
+// Dynamic Type like the system list around them.
 export default function DraftsScreen() {
   const c = useTheme();
   const router = useRouter();
@@ -56,21 +42,14 @@ export default function DraftsScreen() {
   const drafts = useDrafts(server?.id);
 
   const remove = (indices: number[]) => {
-    // SwiftUI reports positions, not ids, and they index the list as it was
-    // rendered. Resolving all of them before deleting anything keeps a
-    // multi-row delete from shifting rows out from under the later indices.
+    // SwiftUI reports positions into the list as rendered, not ids. Resolve
+    // them all first or a multi-row delete shifts later indices off target.
     const doomed = indices.map((i) => drafts[i]?.id);
     for (const id of doomed) if (id) deleteDraft(id);
   };
 
   return (
     <>
-      {/*
-        The same grammar as the inbox and the thread: nothing contextual on the
-        left — a list of drafts has no action that applies to all of them, and
-        deleting them wholesale is not one Mail offers — with compose detached
-        in the right corner, where the thumb has already learned to find it.
-      */}
       <Stack.Toolbar placement="bottom">
         <Stack.Toolbar.Spacer />
         <Stack.Toolbar.Button
@@ -107,8 +86,8 @@ export default function DraftsScreen() {
                     })
                   }
                   modifiers={[
-                    // Plain, so the row keeps its own colours instead of being
-                    // painted tint-on-tint as a button label.
+                    // Without `plain` the whole row is painted as a button
+                    // label, tint on tint.
                     buttonStyle('plain'),
                     listRowBackground(c.background),
                   ]}>
@@ -131,19 +110,9 @@ export default function DraftsScreen() {
   );
 }
 
-/**
- * One row: who it is to, what it is about, how it starts, when it was touched.
- *
- * All four are needed because a draft is defined by what it is missing. A row
- * showing only the subject cannot be told apart from the three other unfinished
- * replies with no subject either, so each field says plainly when it is empty
- * rather than collapsing into a blank line.
- */
 function DraftRow({ draft }: { draft: Draft }) {
   const c = useTheme();
   const recipient = draft.to.trim() || draft.replyToLabel || '(no recipient)';
-  // The body as one line: a preview that honoured newlines would push the rows
-  // below it off the screen.
   const preview = draft.body.replace(/\s+/g, ' ').trim();
 
   return (
