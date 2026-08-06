@@ -48,6 +48,12 @@ const AREAS: { title: string; items: Area[] }[] = [
         detail: 'Addresses that receive mail, and who may read them.',
       },
       {
+        href: '/admin/domains',
+        icon: 'sf:at',
+        label: 'Domains',
+        detail: 'Whether DNS lets mail reach this deployment.',
+      },
+      {
         href: '/admin/blocklist',
         icon: 'sf:hand.raised',
         label: 'Blocklist',
