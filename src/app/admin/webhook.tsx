@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as Crypto from 'expo-crypto';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { Stack, useRouter } from 'expo-router';
 import { openBrowserAsync } from 'expo-web-browser';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -39,17 +41,14 @@ interface TestResult {
 /** `buildWebhookPayload` truncates the body to this before sending it. */
 const BODY_PREVIEW_CHARS = 280;
 
-/**
- * No destination field, and no secret rotation. `PUT /api/webhook` refuses a
- * non-empty `url` from a bearer token, requires `url` in the schema, and
- * branches on a blank one first — deleting the whole row without ever reading
- * `secret`. So there is no body an app can send that rotates anything.
- */
 export default function WebhookScreen() {
   const c = useTheme();
   const router = useRouter();
   const server = useActiveServer();
   const queryClient = useQueryClient();
+
+  // No route returns a secret, so a rotated one is only ever readable here.
+  const [minted, setMinted] = useState<string | null>(null);
 
   // server.role is a sign-in snapshot and may be missing entirely, and this
   // route is deep-linkable, so it cannot lean on the hub having gated it.
@@ -59,6 +58,8 @@ export default function WebhookScreen() {
     queryFn: () => apiFetch<Me>(server!.id, '/api/user/me'),
   });
   const role = me.data?.role ?? server?.role ?? null;
+  // A failed ask with nothing stored is "could not find out", not "not an admin".
+  const unknownRole = role === null && me.isError;
 
   const config = useQuery({
     queryKey: key(server?.id ?? 'none', 'webhook'),
@@ -67,7 +68,7 @@ export default function WebhookScreen() {
   });
 
   const remove = useMutation({
-    // A blank `url` is the clear, and the only write a bearer token can land.
+    // A blank `url` deletes the whole row, secret included.
     mutationFn: () =>
       apiFetch<WebhookConfig>(server!.id, '/api/webhook', {
         method: 'PUT',
@@ -75,11 +76,31 @@ export default function WebhookScreen() {
       }),
     onSuccess: async () => {
       await succeeded();
+      setMinted(null);
       queryClient.invalidateQueries({ queryKey: key(server!.id, 'webhook') });
     },
     onError: async (error) => {
       await errored();
       Alert.alert('Could not remove the webhook', failureMessage(error));
+    },
+  });
+
+  const setSecret = useMutation({
+    // `url` omitted, not echoed back: a non-empty one is refused to this app and a
+    // blank one deletes the row before `secret` is read.
+    mutationFn: (secret: string | null) =>
+      apiFetch<WebhookConfig>(server!.id, '/api/webhook', {
+        method: 'PUT',
+        body: { secret },
+      }),
+    onSuccess: async (_config, secret) => {
+      await succeeded();
+      setMinted(secret);
+      queryClient.invalidateQueries({ queryKey: key(server!.id, 'webhook') });
+    },
+    onError: async (error) => {
+      await errored();
+      Alert.alert('Could not change the signing secret', failureMessage(error));
     },
   });
 
@@ -129,6 +150,39 @@ export default function WebhookScreen() {
     );
   }
 
+  function confirmRotate(current: WebhookConfig) {
+    Alert.alert(
+      current.hasSecret ? 'Replace the signing secret?' : 'Sign deliveries?',
+      `${
+        current.hasSecret
+          ? `Messages posted to ${current.url} are signed with the new secret from the next one on, and your endpoint refuses them until it holds the same value.`
+          : `Messages posted to ${current.url} start carrying an X-SaaSMail-Signature header your endpoint can check.`
+      } The secret is shown on this screen once and no route ever returns it again.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: current.hasSecret ? 'Replace' : 'Sign deliveries',
+          onPress: () => setSecret.mutate(newSecret()),
+        },
+      ],
+    );
+  }
+
+  function confirmClearSecret(current: WebhookConfig) {
+    Alert.alert(
+      'Stop signing deliveries?',
+      `Messages posted to ${current.url} stop carrying a signature, so your endpoint cannot tell them from anything else that finds the URL. The destination itself stays.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear secret',
+          style: 'destructive',
+          onPress: () => setSecret.mutate(null),
+        },
+      ],
+    );
+  }
+
   // Reachable by signing out of the last account with this screen open.
   if (!server) {
     return (
@@ -148,7 +202,7 @@ export default function WebhookScreen() {
 
   const current = config.data ?? null;
   const destination = current?.url ? current.url : null;
-  const busy = remove.isPending || test.isPending;
+  const busy = remove.isPending || test.isPending || setSecret.isPending;
 
   return (
     <>
@@ -199,6 +253,12 @@ export default function WebhookScreen() {
         {role !== 'admin' ? (
           me.isLoading ? (
             <ActivityIndicator style={{ marginTop: Spacing.seven }} />
+          ) : unknownRole ? (
+            <RoleUnknown
+              error={me.error}
+              onRetry={() => me.refetch()}
+              retrying={me.isFetching}
+            />
           ) : (
             <NotAnAdmin />
           )
@@ -267,6 +327,58 @@ export default function WebhookScreen() {
                             ? 'Deliveries carry an X-SaaSMail-Signature header your endpoint can check before trusting them.'
                             : 'Deliveries are unsigned, so your endpoint cannot tell them from anything else that finds the URL.'}
                         </Text>
+
+                        {minted ? (
+                          <>
+                            {/* Selectable for iOS's own Copy: no clipboard module here. */}
+                            <Text
+                              selectable
+                              style={{ ...Type.footnote, color: c.text }}>
+                              {minted}
+                            </Text>
+                            <Text style={{ ...Type.caption, color: c.warning }}>
+                              Shown once. Leaving this screen loses it, and the only
+                              way back is another new secret.
+                            </Text>
+                          </>
+                        ) : null}
+
+                        <Pressable
+                          onPress={() => confirmRotate(current)}
+                          accessibilityRole="button"
+                          disabled={setSecret.isPending}
+                          style={({ pressed }) => ({
+                            paddingTop: Spacing.one,
+                            opacity: pressed ? 0.6 : 1,
+                          })}>
+                          <Text
+                            style={{
+                              ...Type.subhead,
+                              fontWeight: '600',
+                              color: c.primary,
+                            }}>
+                            {current.hasSecret
+                              ? 'Replace signing secret'
+                              : 'Add a signing secret'}
+                          </Text>
+                        </Pressable>
+
+                        {current.hasSecret ? (
+                          <Pressable
+                            onPress={() => confirmClearSecret(current)}
+                            accessibilityRole="button"
+                            disabled={setSecret.isPending}
+                            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+                            <Text
+                              style={{
+                                ...Type.subhead,
+                                fontWeight: '600',
+                                color: c.danger,
+                              }}>
+                              Clear signing secret
+                            </Text>
+                          </Pressable>
+                        ) : null}
                       </Block>
                     </>
                   ) : null}
@@ -281,9 +393,10 @@ export default function WebhookScreen() {
                 </Note>
 
                 <Note>
-                  The signing secret changes in the same place. The server only
-                  stores one alongside the destination it signs for, and the
-                  destination is the half an app may not send.
+                  The signing secret changes here: rotating one escalates nothing,
+                  so it is the half an app may send. The server stores it alongside
+                  the destination it signs for, so there can be no secret until
+                  there is somewhere to post, and removing the webhook deletes both.
                 </Note>
               </Section>
             ) : null}
@@ -328,9 +441,9 @@ export default function WebhookScreen() {
                     versions, and this app talks to all of them. */}
                 <Note>
                   {!current
-                    ? 'The destination and the signing secret are both set there.'
+                    ? 'The destination is set there.'
                     : destination
-                      ? 'Sign in there to change the destination or the signing secret.'
+                      ? 'Sign in there to change the destination.'
                       : 'Sign in there to point this deployment’s inbound mail at a URL.'}
                 </Note>
               </Section>
@@ -360,6 +473,13 @@ function failureMessage(error: unknown): string {
   return error.message;
 }
 
+/** 32 bytes of hex: the route stores whatever string it is sent, weak ones included. */
+function newSecret(): string {
+  return Array.from(Crypto.getRandomBytes(32), (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('');
+}
+
 async function succeeded(): Promise<void> {
   if (process.env.EXPO_OS === 'ios') {
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -370,6 +490,90 @@ async function errored(): Promise<void> {
   if (process.env.EXPO_OS === 'ios') {
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
   }
+}
+
+/** Only some of these are worth asking again; the rest are the answer. */
+function roleFailure(error: unknown): { message: string; retry: boolean } {
+  if (!(error instanceof ApiError)) {
+    return { message: 'Something went wrong asking who you are.', retry: true };
+  }
+  if (error.kind === 'network') {
+    return {
+      message: 'Cannot reach your server. This is not a refusal — nothing was asked.',
+      retry: true,
+    };
+  }
+  if (error.kind === 'passkey-required') {
+    return {
+      message:
+        'This account needs a passkey before the app can use it. Open your server in a browser and register one.',
+      retry: false,
+    };
+  }
+  if (error.kind === 'insufficient-scope') {
+    return {
+      message:
+        'This app was not granted permission to read your account on this server. Sign out and connect it again.',
+      retry: false,
+    };
+  }
+  return { message: error.message, retry: true };
+}
+
+function RoleUnknown({
+  error,
+  onRetry,
+  retrying,
+}: {
+  error: unknown;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const c = useTheme();
+  const { message, retry } = roleFailure(error);
+  const offline = error instanceof ApiError && error.kind === 'network';
+
+  return (
+    <View
+      style={{
+        paddingTop: Spacing.seven,
+        paddingHorizontal: Spacing.four,
+        gap: Spacing.three,
+        alignItems: 'center',
+      }}>
+      <Image
+        source={offline ? 'sf:wifi.slash' : 'sf:exclamationmark.triangle'}
+        tintColor={c.textTertiary}
+        style={{ width: 40, height: 40 }}
+      />
+      <Text style={{ ...Type.title, color: c.text, textAlign: 'center' }}>
+        Could not check your role
+      </Text>
+      <Text
+        selectable
+        style={{ ...Type.callout, color: c.textSecondary, textAlign: 'center' }}>
+        {message} Until this server answers, the app cannot tell whether this account
+        is an admin, and the webhook is not shown to accounts that are not.
+      </Text>
+      {retry ? (
+        <Pressable
+          onPress={onRetry}
+          disabled={retrying}
+          accessibilityRole="button"
+          style={{
+            paddingHorizontal: Spacing.five,
+            paddingVertical: Spacing.two,
+            borderRadius: Radius.full,
+            borderCurve: 'continuous',
+            backgroundColor: c.backgroundSubtle,
+          }}>
+          <Text style={{ ...Type.subhead, fontWeight: '600', color: c.text }}>
+            {retrying ? 'Checking…' : 'Try again'}
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
 }
 
 function NotAnAdmin() {

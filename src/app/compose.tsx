@@ -33,6 +33,7 @@ export default function ComposeScreen() {
 
   const params = useLocalSearchParams<{
     to?: string;
+    cc?: string;
     subject?: string;
     replyTo?: string;
     from?: string;
@@ -54,13 +55,16 @@ export default function ComposeScreen() {
     queryFn: () => apiFetch<Inbox[]>(server!.id, '/api/inboxes'),
   });
 
-  const [draft, setDraft] = useState<Draft>({
+  // Opening state, which is not the same as empty: a reply arrives carrying the
+  // Cc roster of the message it answers.
+  const [seed] = useState<Draft>(() => ({
     to: resumed?.to ?? params.to ?? '',
-    cc: resumed?.cc ?? '',
+    cc: resumed?.cc ?? params.cc ?? '',
     from: resumed?.from ?? params.from ?? '',
     subject: resumed?.subject ?? params.subject ?? '',
     body: resumed?.body ?? '',
-  });
+  }));
+  const [draft, setDraft] = useState<Draft>(seed);
   const options = inboxes.data ?? [];
   // Always defaulted, including when there are several inboxes: a blank From
   // opens the composer with Send disabled and nothing saying why.
@@ -75,13 +79,14 @@ export default function ComposeScreen() {
   const blank = isBlank(draft);
   // Opening a draft is not editing it: writing the row back unchanged would
   // restamp `updatedAt` and jump it to the top of the drafts list.
-  const unchanged =
-    !!resumed &&
-    draft.to === resumed.to &&
-    draft.cc === resumed.cc &&
-    draft.subject === resumed.subject &&
-    draft.body === resumed.body &&
-    from === resumed.from;
+  const untouched =
+    draft.to === seed.to &&
+    draft.cc === seed.cc &&
+    draft.subject === seed.subject &&
+    draft.body === seed.body &&
+    // `draft.from`, never the defaulted `from`: a stored empty From differs
+    // from the fallback, so merely opening the row would count as an edit.
+    draft.from === seed.from;
 
   // Refs, not state: a save that re-rendered would restart its own debounce.
   // `abandoned` stops a queued save from resurrecting a discarded draft.
@@ -89,7 +94,7 @@ export default function ComposeScreen() {
   const abandoned = useRef(false);
 
   const saveNow = useCallback(() => {
-    if (!server || abandoned.current || unchanged) return;
+    if (!server || abandoned.current) return;
     if (blank) {
       if (rowId.current) {
         deleteDraft(rowId.current);
@@ -97,6 +102,7 @@ export default function ComposeScreen() {
       }
       return;
     }
+    if (untouched) return;
     rowId.current = saveDraft({
       id: rowId.current,
       serverId: server.id,
@@ -108,7 +114,7 @@ export default function ComposeScreen() {
       replyToEmailId,
       replyToLabel: resumed?.replyToLabel ?? null,
     });
-  }, [blank, draft, from, replyToEmailId, resumed, server, unchanged]);
+  }, [blank, draft, from, replyToEmailId, resumed, server, untouched]);
 
   // Debounced because the store is synchronous SQLite: a write per keystroke
   // lands on the thread between the key press and the character appearing.
@@ -132,14 +138,22 @@ export default function ComposeScreen() {
         replyToEmailId ?? undefined,
       ),
     onSuccess: async (result) => {
-      if (process.env.EXPO_OS === 'ios') {
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
       queryClient.invalidateQueries({ queryKey: key(server!.id) });
 
       // A 201 is not delivery. The route answers 201 for every outcome it can
-      // describe and puts the real one in `status`; the composer stays open
-      // whenever the message did not leave, since it holds the only copy.
+      // describe and puts the real one in `status`, so the haptic reads that
+      // and not the response; the composer stays open whenever the message did
+      // not leave, since it holds the only copy.
+      if (process.env.EXPO_OS === 'ios') {
+        await Haptics.notificationAsync(
+          result.status === 'sent'
+            ? Haptics.NotificationFeedbackType.Success
+            : result.status === 'failed'
+              ? Haptics.NotificationFeedbackType.Error
+              : Haptics.NotificationFeedbackType.Warning,
+        );
+      }
+
       if (result.status === 'failed') {
         Alert.alert(
           'Not sent',
@@ -177,7 +191,9 @@ export default function ComposeScreen() {
   });
 
   const discard = () => {
-    if (blank) {
+    // A reply left as it opened holds a Cc roster but nothing of the user's,
+    // so there is nothing to ask about.
+    if (blank || (!resumed && untouched)) {
       router.back();
       return;
     }
@@ -326,7 +342,7 @@ export default function ComposeScreen() {
           }}
         />
 
-        {problem && !blank ? (
+        {problem && !blank && !untouched ? (
           <Text
             selectable
             style={{

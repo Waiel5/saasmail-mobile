@@ -4,10 +4,12 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef } from 'react';
 import { ActivityIndicator, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 
+import { AttachmentRow } from '@/components/attachment-row';
 import { MessageBody } from '@/components/message-body';
 import { HAIRLINE, Radius, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { apiFetch } from '@/lib/api';
+import { replyCc } from '@/lib/compose';
 import { formatMessageTime } from '@/lib/format';
 import { key } from '@/lib/query';
 import type { Message, MessagesResponse } from '@/lib/types';
@@ -95,6 +97,9 @@ export default function ThreadScreen() {
                   // `recipient` is the inbox the mail arrived on, i.e. the
                   // address to send back from.
                   from: latestInbound.recipient ?? '',
+                  // Dropping this answers a group thread as a 1:1, and nobody
+                  // else ever learns the conversation continued.
+                  cc: replyCc(latestInbound),
                 },
               });
             }}
@@ -130,7 +135,12 @@ export default function ThreadScreen() {
           </Text>
         ) : (
           ordered.map((message) => (
-            <MessageCard key={`${message.type}:${message.id}`} message={message} chatMode={chatMode} />
+            <MessageCard
+              key={`${message.type}:${message.id}`}
+              message={message}
+              chatMode={chatMode}
+              serverId={server!.id}
+            />
           ))
         )}
       </ScrollView>
@@ -138,10 +148,23 @@ export default function ThreadScreen() {
   );
 }
 
-function MessageCard({ message, chatMode }: { message: Message; chatMode: boolean }) {
+function MessageCard({
+  message,
+  chatMode,
+  serverId,
+}: {
+  message: Message;
+  chatMode: boolean;
+  serverId: string;
+}) {
   const c = useTheme();
   const { width } = useWindowDimensions();
   const outbound = message.type === 'sent';
+  const cc = message.cc ?? [];
+  const ccLine =
+    cc.length > 0
+      ? `Cc ${cc.map((entry) => entry.name || entry.email).join(', ')}`
+      : null;
 
   if (chatMode) {
     return (
@@ -156,7 +179,13 @@ function MessageCard({ message, chatMode }: { message: Message; chatMode: boolea
           paddingVertical: Spacing.two,
           gap: Spacing.one,
         }}>
+        {ccLine ? (
+          <Text numberOfLines={2} style={{ ...Type.caption, color: c.textTertiary }}>
+            {ccLine}
+          </Text>
+        ) : null}
         <MessageBody message={message} tint={c.text} />
+        <AttachmentRow message={message} serverId={serverId} />
         <Text
           style={{
             ...Type.caption,
@@ -190,8 +219,14 @@ function MessageCard({ message, chatMode }: { message: Message; chatMode: boolea
           {' · '}
           {formatMessageTime(message.timestamp)}
         </Text>
+        {ccLine ? (
+          <Text numberOfLines={2} style={{ ...Type.footnote, color: c.textSecondary }}>
+            {ccLine}
+          </Text>
+        ) : null}
       </View>
       <MessageBody message={message} tint={c.text} />
+      <AttachmentRow message={message} serverId={serverId} />
     </View>
   );
 }

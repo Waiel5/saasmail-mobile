@@ -1,17 +1,21 @@
-const MINUTE = 60;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
+/** Local midnight, so the count below is calendar days and not elapsed hours. */
+function startOfDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
 
 export function formatListTime(epochSeconds: number, now = Date.now() / 1000): string {
-  const date = new Date(epochSeconds * 1000);
-  const delta = now - epochSeconds;
+  const today = new Date(now * 1000);
+  // Clock skew: a stamp from the future is shown as now, never as "Yesterday".
+  const date = new Date(Math.min(epochSeconds, now) * 1000);
+  // Rounded because a DST day is 23 or 25 hours long.
+  const days = Math.round((startOfDay(today) - startOfDay(date)) / 86_400_000);
 
-  if (delta < DAY && new Date(now * 1000).getDate() === date.getDate()) {
+  if (days <= 0) {
     return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
-  if (delta < 2 * DAY) return 'Yesterday';
-  if (delta < 7 * DAY) return date.toLocaleDateString(undefined, { weekday: 'short' });
-  if (date.getFullYear() === new Date(now * 1000).getFullYear()) {
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return date.toLocaleDateString(undefined, { weekday: 'short' });
+  if (date.getFullYear() === today.getFullYear()) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
   return date.toLocaleDateString(undefined, {

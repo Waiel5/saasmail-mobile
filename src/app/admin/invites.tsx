@@ -196,6 +196,9 @@ export default function InvitesScreen() {
     ...(listed.data ?? []).filter((row) => !mine.some((own) => own.id === row.id)),
   ].filter(isUsable);
 
+  // Same filter as the list: `mine[0]` stays shareable after it expires.
+  const shareable = rows.find((row) => mine.some((own) => own.id === row.id)) ?? null;
+
   // Reachable by signing out of the last account with this screen open.
   if (!server) {
     return (
@@ -223,11 +226,11 @@ export default function InvitesScreen() {
       <Stack.Screen options={{ title: 'Invites', headerLargeTitle: true }} />
 
       <Stack.Toolbar placement="bottom">
-        {mine[0] ? (
+        {shareable ? (
           <Stack.Toolbar.Button
             icon="square.and.arrow.up"
             accessibilityLabel="Share the newest invitation link"
-            onPress={() => share(mine[0])}
+            onPress={() => share(shareable)}
           />
         ) : null}
         <Stack.Toolbar.Spacer />
@@ -265,8 +268,11 @@ export default function InvitesScreen() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   autoFocus
+                  editable={!create.isPending}
                   onSubmitEditing={() => {
-                    if (!problem) create.mutate();
+                    // `address` clears only onSuccess, so a second Return inside one
+                    // slow request mints a second live credential.
+                    if (!problem && !create.isPending) create.mutate();
                   }}
                   style={{ ...Type.body, color: c.text, flex: 1, padding: 0 }}
                 />
@@ -337,7 +343,7 @@ function expiryLabel(days: number): string {
 }
 
 /**
- * Three different 403s reach this screen and only `OAUTH_SCOPE_DENIED` leaves
+ * Four different 403s reach this screen and only `OAUTH_SCOPE_DENIED` leaves
  * the form usable, so they are told apart by code rather than by kind.
  */
 function explainListFailure(
@@ -354,6 +360,12 @@ function explainListFailure(
   if (error.code === 'OAUTH_INSUFFICIENT_SCOPE') {
     return {
       note: 'This app was not granted admin permission on this server. Sign out and connect it again.',
+      blocking: true,
+    };
+  }
+  if (error.kind === 'passkey-required') {
+    return {
+      note: 'This account needs a passkey before the app can use it. Open your server in a browser, register one, then open this screen again.',
       blocking: true,
     };
   }

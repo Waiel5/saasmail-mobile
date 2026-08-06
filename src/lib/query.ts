@@ -28,7 +28,9 @@ export const queryClient = new QueryClient({
 
 /** Always build keys through this, never as a literal array. */
 export function key(serverId: string, ...parts: (string | number | undefined)[]) {
-  return [serverId, ...parts.filter((p) => p !== undefined)] as const;
+  // Hold the slot rather than dropping it: an absent trailing filter must not
+  // collapse onto the unfiltered query's cache entry.
+  return [serverId, ...parts.map((p) => p ?? null)] as const;
 }
 
 /**

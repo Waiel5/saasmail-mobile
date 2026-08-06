@@ -1,3 +1,5 @@
+import type { Message } from './types';
+
 /**
  * Keep this module import-free: `scripts/check-mail-text.ts` runs it outside a
  * React Native runtime. Anything reaching expo-* belongs in `compose.ts`.
@@ -105,4 +107,34 @@ export function htmlAddsNothing(html: string, text: string): boolean {
 
   const flatten = (value: string) => value.replace(/\s+/g, " ").trim();
   return flatten(stripped) === flatten(text);
+}
+
+const MAX_CC = 50;
+
+export function replyCc(message: Message): string {
+  // Seeded with the addresses to exclude and grown as each is taken, so the one
+  // set both filters and dedupes.
+  const seen = new Set(
+    [message.recipient, message.fromAddress]
+      .filter((a): a is string => !!a)
+      .map((a) => a.trim().toLowerCase()),
+  );
+
+  const roster: string[] = [];
+  // The To line counts too. A reply-all that carries only Cc drops anyone who
+  // was addressed directly alongside you.
+  const candidates = [
+    ...parseAddressList(message.toAddress ?? '').map((email) => ({ email })),
+    ...(message.cc ?? []),
+  ];
+  for (const entry of candidates) {
+    const email = entry.email.trim();
+    const lower = email.toLowerCase();
+    if (!email || seen.has(lower)) continue;
+    seen.add(lower);
+    roster.push(email);
+    // The send routes cap cc at 50 and 400 past it.
+    if (roster.length >= MAX_CC) break;
+  }
+  return roster.join(', ');
 }

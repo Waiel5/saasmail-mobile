@@ -48,21 +48,35 @@ async function refreshOnce(server: ServerRecord): Promise<ServerCredentials | nu
   if (existing) return existing;
 
   const attempt = (async () => {
-    const current = await readCredentials(server.id);
-    if (!current?.refreshToken) return null;
-
-    // Captured before the network call: if it moved, the user signed out or
-    // re-authenticated meanwhile and this result must not be written.
-    const generation = current.generation;
-
     try {
-      const next = await refreshCredentials(server, current);
-      const now = await readCredentials(server.id);
-      if (!now || now.generation !== generation) return now;
-      await writeCredentials(server.id, next);
+      const current = await readCredentials(server.id);
+      if (!current?.refreshToken) return null;
+
+      // Captured before the network call: if it moved, the user signed out or
+      // re-authenticated meanwhile and this result must not be written.
+      const generation = current.generation;
+
+      let next: ServerCredentials;
+      try {
+        next = await refreshCredentials(server, current);
+      } catch {
+        return null;
+      }
+
+      // Past the exchange the stored refresh token is spent, so a keychain
+      // failure here is unrecoverable and must not read as "refresh failed".
+      try {
+        const now = await readCredentials(server.id);
+        if (!now || now.generation !== generation) return now;
+        await writeCredentials(server.id, next);
+      } catch {
+        throw new ApiError(
+          'This session could not be saved to the keychain. Remove this server and add it again.',
+          'unauthorized',
+          401,
+        );
+      }
       return next;
-    } catch {
-      return null;
     } finally {
       inFlightRefresh.delete(server.id);
     }
@@ -163,7 +177,16 @@ export async function apiFetch<T>(
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   if (!text) return undefined as T;
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    // A 200 of HTML is a captive portal, a proxy login page or the wrong host.
+    throw new ApiError(
+      'That address answered, but not like a saasmail server.',
+      'server',
+      res.status,
+    );
+  }
 }
 
 export async function authorizedSource(

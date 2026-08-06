@@ -17,8 +17,10 @@ import {
   stripUnsubscribeFooter,
   stripUnsubscribeFooterHtml,
   textToHtml,
+  replyCc,
   withSignature,
 } from '../src/lib/mail-text.ts';
+
 
 // --- escaping -------------------------------------------------------------
 
@@ -172,6 +174,59 @@ assert.ok(
 assert.ok(
   !htmlAddsNothing('<p>Anything</p>', '   '),
   'an empty text part is never equivalent',
+);
+
+
+
+// --- reply-all roster -------------------------------------------------------
+
+const msg = (over: Record<string, unknown> = {}) =>
+  ({
+    id: 'e1',
+    type: 'received',
+    subject: null,
+    bodyHtml: null,
+    bodyText: null,
+    isRead: 0,
+    timestamp: 0,
+    recipient: 'support@acme.com',
+    fromAddress: 'sender@out.com',
+    toAddress: 'support@acme.com',
+    ...over,
+  }) as Parameters<typeof replyCc>[0];
+
+assert.equal(
+  replyCc(msg({ cc: [{ email: 'a@x.com' }, { email: 'b@x.com' }] })),
+  'a@x.com, b@x.com',
+);
+assert.equal(
+  replyCc(msg({ cc: [{ email: 'support@acme.com' }, { email: 'a@x.com' }] })),
+  'a@x.com',
+  'the inbox replying is never cc-d back to itself',
+);
+assert.equal(
+  replyCc(msg({ cc: [{ email: 'SENDER@out.com' }, { email: 'a@x.com' }] })),
+  'a@x.com',
+  'the sender becomes the To, case-insensitively',
+);
+assert.equal(
+  replyCc(msg({ cc: [{ email: 'a@x.com' }, { email: 'A@X.com' }] })),
+  'a@x.com',
+  'duplicates fold',
+);
+// The bug the first version shipped: co-recipients on the To line were dropped.
+assert.equal(
+  replyCc(msg({ toAddress: 'support@acme.com, team@acme.com', cc: [{ email: 'a@x.com' }] })),
+  'team@acme.com, a@x.com',
+  'people addressed on the To line survive a reply-all',
+);
+assert.equal(replyCc(msg()), '', 'a one-to-one reply carries nobody');
+assert.equal(
+  replyCc(
+    msg({ cc: Array.from({ length: 60 }, (_, i) => ({ email: `p${i}@x.com` })) }),
+  ).split(', ').length,
+  50,
+  'capped at the 50 the send routes accept',
 );
 
 console.log('mail-text: all checks passed');

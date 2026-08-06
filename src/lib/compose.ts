@@ -5,13 +5,14 @@
 import { apiFetch } from './api';
 import {
   isEmail,
+  replyCc,
   parseAddressList,
   textToHtml,
   withSignature,
 } from './mail-text';
-import type { Inbox } from './types';
+import type { Inbox, Message } from './types';
 
-export { isEmail, parseAddressList, textToHtml, withSignature };
+export { replyCc, isEmail, parseAddressList, textToHtml, withSignature };
 
 export interface Draft {
   to: string;
@@ -33,8 +34,17 @@ export function draftProblem(draft: Draft, isReply: boolean): string | null {
   if (!isReply && !isEmail(draft.to)) return 'Enter a valid recipient address.';
   const badCc = parseAddressList(draft.cc).find((a) => !isEmail(a));
   if (badCc) return `“${badCc}” is not a valid address.`;
+  // Without this the send is a guaranteed 400: an empty body renders to no
+  // HTML at all, and both routes reject that as MISSING_BODY.
+  if (!draft.body.trim()) return 'Write a message before sending.';
   return null;
 }
+
+/**
+ * Reply-all roster for the Cc field: everyone on the message except the inbox
+ * answering and the sender, who becomes the To. Addresses only — a display
+ * name with a comma in it comes back out of `parseAddressList` as two entries.
+ */
 
 export async function sendDraft(
   serverId: string,

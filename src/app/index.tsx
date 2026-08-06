@@ -220,22 +220,27 @@ function EmptyState({
     "No messages yet. When someone emails one of your inboxes, they appear here.";
   let action: { label: string; onPress: () => void } | null = null;
 
-  if (error instanceof ApiError) {
+  // Branch on `error` first, not on `ApiError`: anything the query throws is a
+  // broken server, and falling through renders "No messages yet" with no retry.
+  if (error) {
     icon = "sf:exclamationmark.triangle";
-    if (error.kind === "passkey-required") {
+    action = { label: "Try again", onPress: onRetry };
+    if (!(error instanceof ApiError)) {
+      message = "Something went wrong loading your mail.";
+    } else if (error.kind === "passkey-required") {
       // No retry action: neither a refetch nor a fresh token can clear this.
+      action = null;
       message =
         "This account needs a passkey before the app can read mail. Open your server in a browser, register one, then pull to refresh.";
     } else if (error.kind === "insufficient-scope") {
+      action = null;
       message =
         "This app was not granted permission to read mail on this server. Sign out and connect it again.";
     } else if (error.kind === "network") {
       icon = "sf:wifi.slash";
       message = "Cannot reach your server. Check your connection.";
-      action = { label: "Try again", onPress: onRetry };
     } else {
       message = error.message;
-      action = { label: "Try again", onPress: onRetry };
     }
   } else if (searchTerm) {
     icon = "sf:magnifyingglass";

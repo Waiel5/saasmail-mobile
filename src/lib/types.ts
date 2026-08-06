@@ -39,6 +39,12 @@ export interface GroupedResponse {
   limit: number;
 }
 
+/** The rest of a message's recipients. Losing these on reply collapses a group. */
+export interface CcEntry {
+  email: string;
+  name?: string | null;
+}
+
 /** Received and sent rows, merged server-side into one shape. */
 export interface Message {
   id: string;
@@ -50,6 +56,8 @@ export interface Message {
   recipient?: string;
   fromAddress?: string;
   toAddress?: string;
+  /** Always sent by a current server; absent from one predating the column. */
+  cc?: CcEntry[];
   /** Received only, null on sent rows. 0 or 1, not a boolean: SQLite has none. */
   isRead: number | null;
   /** Sent only. */
@@ -70,6 +78,8 @@ export interface Attachment {
   contentType: string;
   size: number;
   kind: string;
+  /** Non-null for images referenced inline by the body; those are not listed. */
+  contentId?: string | null;
 }
 
 export interface Inbox {

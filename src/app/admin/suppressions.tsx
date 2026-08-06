@@ -64,6 +64,8 @@ export default function SuppressionsScreen() {
   });
   const role = me.data?.role ?? server?.role ?? null;
   const isAdmin = role === 'admin';
+  // A failed ask with nothing stored is "could not find out", not "not an admin".
+  const unknownRole = role === null && me.isError;
 
   const query = useInfiniteQuery({
     queryKey: key(server?.id ?? 'none', 'suppressions'),
@@ -215,6 +217,12 @@ export default function SuppressionsScreen() {
         {!isAdmin ? (
           me.isLoading ? (
             <ActivityIndicator style={{ marginTop: Spacing.seven }} />
+          ) : unknownRole ? (
+            <RoleUnknown
+              error={me.error}
+              onRetry={() => me.refetch()}
+              retrying={me.isFetching}
+            />
           ) : (
             <NotAnAdmin />
           )
@@ -430,6 +438,90 @@ async function failed(title: string, error: unknown): Promise<void> {
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
   }
   Alert.alert(title, error instanceof ApiError ? error.message : 'Something went wrong.');
+}
+
+/** Only some of these are worth asking again; the rest are the answer. */
+function roleFailure(error: unknown): { message: string; retry: boolean } {
+  if (!(error instanceof ApiError)) {
+    return { message: 'Something went wrong asking who you are.', retry: true };
+  }
+  if (error.kind === 'network') {
+    return {
+      message: 'Cannot reach your server. This is not a refusal — nothing was asked.',
+      retry: true,
+    };
+  }
+  if (error.kind === 'passkey-required') {
+    return {
+      message:
+        'This account needs a passkey before the app can use it. Open your server in a browser and register one.',
+      retry: false,
+    };
+  }
+  if (error.kind === 'insufficient-scope') {
+    return {
+      message:
+        'This app was not granted permission to read your account on this server. Sign out and connect it again.',
+      retry: false,
+    };
+  }
+  return { message: error.message, retry: true };
+}
+
+function RoleUnknown({
+  error,
+  onRetry,
+  retrying,
+}: {
+  error: unknown;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const c = useTheme();
+  const { message, retry } = roleFailure(error);
+  const offline = error instanceof ApiError && error.kind === 'network';
+
+  return (
+    <View
+      style={{
+        paddingTop: Spacing.seven,
+        paddingHorizontal: Spacing.four,
+        gap: Spacing.three,
+        alignItems: 'center',
+      }}>
+      <Image
+        source={offline ? 'sf:wifi.slash' : 'sf:exclamationmark.triangle'}
+        tintColor={c.textTertiary}
+        style={{ width: 40, height: 40 }}
+      />
+      <Text style={{ ...Type.title, color: c.text, textAlign: 'center' }}>
+        Could not check your role
+      </Text>
+      <Text
+        selectable
+        style={{ ...Type.callout, color: c.textSecondary, textAlign: 'center' }}>
+        {message} Until this server answers, the app cannot tell whether this account
+        is an admin, and the suppression list is not shown to accounts that are not.
+      </Text>
+      {retry ? (
+        <Pressable
+          onPress={onRetry}
+          disabled={retrying}
+          accessibilityRole="button"
+          style={{
+            paddingHorizontal: Spacing.five,
+            paddingVertical: Spacing.two,
+            borderRadius: Radius.full,
+            borderCurve: 'continuous',
+            backgroundColor: c.backgroundSubtle,
+          }}>
+          <Text style={{ ...Type.subhead, fontWeight: '600', color: c.text }}>
+            {retrying ? 'Checking…' : 'Try again'}
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
 }
 
 function NotAnAdmin() {

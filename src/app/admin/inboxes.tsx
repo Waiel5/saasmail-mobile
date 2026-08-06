@@ -86,29 +86,56 @@ export default function InboxesScreen() {
     mutationFn: async ({ inbox, draft }: { inbox: AdminInbox; draft: Draft }) => {
       // Sequential, not concurrent: a refused identity write must not leave the
       // inbox's members already replaced.
-      if (identityChanged(inbox, draft)) {
+      const identitySaved = identityChanged(inbox, draft);
+      if (identitySaved) {
         await apiFetch(
           server!.id,
           `/api/admin/inboxes/${encodeURIComponent(inbox.email)}`,
           { method: 'PATCH', body: identityBody(draft) },
         );
       }
-      // PUT replaces the whole set, so this must send every intended id.
-      if (!sameIds(draft.userIds, inbox.assignedUserIds)) {
+      if (sameIds(draft.userIds, inbox.assignedUserIds)) {
+        return { identitySaved, assignments: null };
+      }
+      try {
+        // PUT replaces the whole set, so this must send every intended id.
         await apiFetch(
           server!.id,
           `/api/admin/inboxes/${encodeURIComponent(inbox.email)}/assignments`,
           { method: 'PUT', body: { userIds: draft.userIds } },
         );
+        return { identitySaved, assignments: null };
+      } catch (error) {
+        // Returned, not thrown: the PATCH above is already committed, and one
+        // "Could not save" would report a write that landed as lost.
+        return { identitySaved, assignments: error };
       }
     },
-    onSuccess: async () => {
+    onSuccess: async (result, { inbox }) => {
+      invalidate();
+
+      if (result.assignments) {
+        if (process.env.EXPO_OS === 'ios') {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
+        // Left open so the toolbar retries only the half that failed: the
+        // refetched row now matches the draft's name, signature and mode.
+        Alert.alert(
+          result.identitySaved
+            ? 'Only part of this was saved'
+            : 'Could not change who can use this inbox',
+          result.identitySaved
+            ? `The name, signature and reading mode for ${inbox.email} were saved. Who can use it was not: ${failureMessage(result.assignments)}`
+            : failureMessage(result.assignments),
+        );
+        return;
+      }
+
       if (process.env.EXPO_OS === 'ios') {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
       setOpenEmail(null);
       setDraft(null);
-      invalidate();
     },
     onError: (error) => Alert.alert('Could not save', failureMessage(error)),
   });
@@ -408,12 +435,18 @@ function identityChanged(inbox: AdminInbox, draft: Draft): boolean {
   );
 }
 
+/** Sets, not lengths: ['x','x'] and ['x','y'] pass a length-plus-includes test. */
 function sameIds(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((id) => b.includes(id));
+  const left = new Set(a);
+  const right = new Set(b);
+  return left.size === right.size && [...left].every((id) => right.has(id));
 }
 
 function failureMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return 'Something went wrong.';
+  // Code before kind: both OAuth refusals arrive as `insufficient-scope`, and only
+  // this one is about the request rather than the grant.
+  if (error.code === 'OAUTH_SCOPE_DENIED') return error.message;
   if (error.kind === 'forbidden') return 'Your account is not an admin on this server.';
   if (error.kind === 'insufficient-scope') {
     return 'This app was not granted admin permission on this server. Sign out and connect it again.';
@@ -522,6 +555,9 @@ function Editor({
     ? draft.userIds.filter((id) => !users.some((user) => user.id === id)).length
     : 0;
 
+  // What the server holds, not what the draft says: the PUT is judged against it.
+  const held = new Set(inbox.assignedUserIds);
+
   return (
     <View>
       <Field label="Name">
@@ -614,39 +650,50 @@ function Editor({
             Nobody has an account on this server yet.
           </Text>
         ) : (
-          users.map((user) => (
-            <Pressable
-              key={user.id}
-              onPress={() => toggleUser(user.id)}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: draft.userIds.includes(user.id) }}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: Spacing.three,
-                paddingVertical: Spacing.two,
-                opacity: pressed ? 0.6 : 1,
-              })}>
-              <View style={{ flex: 1, gap: 1 }}>
-                <Text numberOfLines={1} style={{ ...Type.body, color: c.text }}>
-                  {user.name || user.email}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={{ ...Type.caption, color: c.textSecondary }}>
-                  {user.email}
-                  {user.role === 'admin' ? ' · Admin' : ''}
-                </Text>
-              </View>
-              {draft.userIds.includes(user.id) ? (
-                <Image
-                  source="sf:checkmark"
-                  tintColor={c.primary}
-                  style={{ width: 17, height: 17 }}
-                />
-              ) : null}
-            </Pressable>
-          ))
+          users.map((user) => {
+            const ticked = draft.userIds.includes(user.id);
+            // An app may only shrink this set: a tick can always come off, but one
+            // the inbox does not already hold can never go on.
+            const changeable = held.has(user.id) || ticked;
+            return (
+              <Pressable
+                key={user.id}
+                onPress={() => toggleUser(user.id)}
+                disabled={!changeable}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: ticked, disabled: !changeable }}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: Spacing.three,
+                  paddingVertical: Spacing.two,
+                  opacity: !changeable ? 0.5 : pressed ? 0.6 : 1,
+                })}>
+                <View style={{ flex: 1, gap: 1 }}>
+                  <Text numberOfLines={1} style={{ ...Type.body, color: c.text }}>
+                    {user.name || user.email}
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    style={{ ...Type.caption, color: c.textSecondary }}>
+                    {user.email}
+                    {user.role === 'admin' ? ' · Admin' : ''}
+                  </Text>
+                </View>
+                {ticked ? (
+                  <Image
+                    source="sf:checkmark"
+                    tintColor={c.primary}
+                    style={{ width: 17, height: 17 }}
+                  />
+                ) : changeable ? null : (
+                  <Text style={{ ...Type.caption, color: c.textTertiary }}>
+                    Browser only
+                  </Text>
+                )}
+              </Pressable>
+            );
+          })
         )}
 
         <Text style={{ ...Type.caption, color: c.textTertiary }}>
@@ -655,6 +702,12 @@ function Editor({
           {hidden > 0
             ? ` ${hidden} assigned ${hidden === 1 ? 'account is' : 'accounts are'} not in this list, and ${hidden === 1 ? 'it stays' : 'they stay'} assigned.`
             : ''}
+        </Text>
+
+        <Text style={{ ...Type.caption, color: c.textTertiary }}>
+          Access is given in a browser. This app may take an inbox away from
+          someone but never hand it out, so the accounts this one does not already
+          have are shown here without a tick you can set.
         </Text>
       </Block>
     </View>

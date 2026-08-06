@@ -99,16 +99,13 @@ export function InboxRowItem({
       await queryClient.cancelQueries({
         queryKey: key(serverId, "people", "grouped"),
       });
-      // Person ids and conversation ids are separate namespaces, so an id alone
-      // does not identify a row.
-      return patchLists(queryClient, serverId, (candidate) =>
-        candidate.type === row.type && candidate.id === row.id
-          ? { ...candidate, unreadCount: 0 }
-          : candidate,
-      );
+      return patchRow(queryClient, serverId, row, (candidate) => ({
+        ...candidate,
+        unreadCount: 0,
+      }));
     },
     onError: (error, _variables, before) => {
-      if (before) restoreLists(queryClient, before);
+      if (before) restoreRow(queryClient, before);
       announceFailure("Could not mark as read", error);
     },
     onSettled: settle,
@@ -125,14 +122,10 @@ export function InboxRowItem({
       await queryClient.cancelQueries({
         queryKey: key(serverId, "people", "grouped"),
       });
-      return patchLists(queryClient, serverId, (candidate) =>
-        candidate.type === "person" && candidate.id === row.id
-          ? null
-          : candidate,
-      );
+      return patchRow(queryClient, serverId, row, () => null);
     },
     onError: (error, _variables, before) => {
-      if (before) restoreLists(queryClient, before);
+      if (before) restoreRow(queryClient, before);
       announceFailure("Could not delete", error);
     },
     onSettled: settle,
@@ -495,47 +488,79 @@ function SwipeAction({
   );
 }
 
-type CachedList = [QueryKey, GroupedResponse | undefined];
+interface RowSnapshot {
+  queryKey: QueryKey;
+  index: number;
+  row: InboxRow;
+}
+
+/** Person ids and conversation ids are separate namespaces. */
+const sameRow = (a: InboxRow, b: InboxRow) => a.type === b.type && a.id === b.id;
 
 /**
- * Rewrite every cached page of the inbox list; returns the rollback for
- * `restoreLists`.
+ * Edit one row across every cached page of the inbox list; returns the
+ * per-page rollback for `restoreRow`.
  *
- * The list is keyed `[serverId, "people", "grouped", filter, search?]`. The
+ * The list is keyed `[serverId, "people", "grouped", filter, search]`. The
  * filter is read from its fixed slot rather than searched for: a search whose
  * text is "unread" would otherwise look like the unread filter and start
  * dropping read rows out of its own results.
  */
-function patchLists(
+function patchRow(
   queryClient: QueryClient,
   serverId: string,
+  target: InboxRow,
   edit: (row: InboxRow) => InboxRow | null,
-): CachedList[] {
-  const before = queryClient.getQueriesData<GroupedResponse>({
+): RowSnapshot[] {
+  const snapshots: RowSnapshot[] = [];
+
+  const cached = queryClient.getQueriesData<GroupedResponse>({
     queryKey: key(serverId, "people", "grouped"),
   });
 
-  for (const [queryKey, page] of before) {
+  for (const [queryKey, page] of cached) {
     if (!page) continue;
+    const index = page.data.findIndex((candidate) => sameRow(candidate, target));
+    if (index < 0) continue;
+
+    const before = page.data[index];
+    const next = edit(before);
     const unreadOnly = queryKey[3] === "unread";
-    const data = page.data.flatMap((row) => {
-      const next = edit(row);
-      if (!next) return [];
-      if (unreadOnly && next.unreadCount === 0) return [];
-      return [next];
-    });
+    const keep = next && !(unreadOnly && next.unreadCount === 0) ? next : null;
+
+    const data = [...page.data];
+    if (keep) data[index] = keep;
+    else data.splice(index, 1);
+
+    snapshots.push({ queryKey, index, row: before });
     queryClient.setQueryData<GroupedResponse>(queryKey, {
       ...page,
       data,
-      total: page.total - (page.data.length - data.length),
+      total: keep ? page.total : page.total - 1,
     });
   }
 
-  return before;
+  return snapshots;
 }
 
-function restoreLists(queryClient: QueryClient, before: CachedList[]): void {
-  for (const [queryKey, page] of before) {
-    queryClient.setQueryData<GroupedResponse>(queryKey, page);
+/**
+ * Undo one row against the cache as it stands now. Writing back whole page
+ * snapshots instead would revert every other change that landed since.
+ */
+function restoreRow(queryClient: QueryClient, snapshots: RowSnapshot[]): void {
+  for (const { queryKey, index, row } of snapshots) {
+    const page = queryClient.getQueryData<GroupedResponse>(queryKey);
+    if (!page) continue;
+
+    const at = page.data.findIndex((candidate) => sameRow(candidate, row));
+    const data = [...page.data];
+    if (at >= 0) data[at] = row;
+    else data.splice(Math.min(index, data.length), 0, row);
+
+    queryClient.setQueryData<GroupedResponse>(queryKey, {
+      ...page,
+      data,
+      total: at >= 0 ? page.total : page.total + 1,
+    });
   }
 }
