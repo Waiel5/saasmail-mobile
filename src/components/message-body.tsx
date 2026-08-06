@@ -1,7 +1,7 @@
 import { randomUUID } from 'expo-crypto';
 import { Image } from 'expo-image';
 import { useMemo, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 import { Radius, Spacing, Type } from '@/constants/theme';
@@ -148,12 +148,25 @@ export function MessageBody({ message, tint }: { message: Message; tint: string 
         // Keyed on the policy: the CSP is applied at document load, so the
         // WebView has to be rebuilt for a toggle to take effect.
         key={imgSrc}
-        originWhitelist={['about:blank']}
+        // Must be '*'. react-native-webview only consults
+        // onShouldStartLoadWithRequest for URLs that PASS the whitelist —
+        // everything else it hands straight to Linking.openURL, which fires
+        // any scheme the device can open, including this app's own
+        // saasmail://. Narrowing the whitelist widened the hole.
+        originWhitelist={['*']}
         source={{ html, baseUrl: '' }}
         javaScriptEnabled
         onMessage={(e) => setHeight(Number(e.nativeEvent.data) || 0)}
-        // Second line behind the CSP: a message may not navigate the view.
-        onShouldStartLoadWithRequest={(req) => req.url === 'about:blank'}
+        onShouldStartLoadWithRequest={(req) => {
+          if (req.url === 'about:blank') return true;
+          // A tapped web link goes to the system browser, as Mail does.
+          // Every other scheme is refused, and a navigation the user did not
+          // tap is refused too, so a redirect cannot launch anything.
+          if (req.navigationType === 'click' && /^https?:\/\//i.test(req.url)) {
+            Linking.openURL(req.url).catch(() => {});
+          }
+          return false;
+        }}
         setSupportMultipleWindows={false}
         allowsInlineMediaPlayback={false}
         allowFileAccess={false}
