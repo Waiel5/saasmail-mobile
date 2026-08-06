@@ -32,7 +32,12 @@ export default function RootLayout() {
             headerBackButtonDisplayMode: "minimal",
           }}
         >
-          <Stack.Screen name="index" options={{ headerLargeTitle: false }} />
+          {/* title '' or the route name renders on first run, before the inbox
+              screen mounts its own headerTitle. */}
+          <Stack.Screen
+            name="index"
+            options={{ headerLargeTitle: false, title: '' }}
+          />
           <Stack.Screen name="settings" options={{ title: "Settings" }} />
           <Stack.Screen
             name="drafts"
