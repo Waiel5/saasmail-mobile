@@ -77,9 +77,12 @@ export default function InboxesScreen() {
   });
 
   function invalidate() {
-    queryClient.invalidateQueries({
-      queryKey: key(server!.id, 'admin', 'inboxes'),
-    });
+    // The whole server namespace, not just this list: displayMode decides
+    // whether every thread renders as chat bubbles or cards, and thread
+    // queries cache it for 30s with no refetch on focus — so a narrower
+    // invalidation leaves the switch looking like it did nothing until the
+    // app is restarted.
+    queryClient.invalidateQueries({ queryKey: key(server!.id) });
   }
 
   const save = useMutation({
